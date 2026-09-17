@@ -54,6 +54,7 @@ from datetime import datetime, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEADLINE = None   # unix time to stop by, set with --deadline
+MAX_NEW = 0       # cap on logs read per run, set with --max-new
 
 
 class TimeUp(Exception):
@@ -69,7 +70,7 @@ API_URL = "https://www.warcraftlogs.com/api/v2/client"
 
 MYTHIC = 5
 TOP_N = 10
-RANKINGS_TTL = 12 * 3600
+RANKINGS_TTL = 12 * 3600   # how old saved rankings may be before rechecking
 SPECS_PER_QUERY = 8
 FIGHTS_PER_QUERY = 4
 
@@ -312,12 +313,13 @@ def rank_key(enc_id, s, region):
     return f"rank|{enc_id}|{s['classSlug']}|{s['specSlug']}|{region or 'all'}"
 
 
-def get_rankings(api, enc_id, specs, region, refresh):
+def get_rankings(api, enc_id, specs, region, refresh, ttl=RANKINGS_TTL, stats=None):
+    """Fetch the top 10 per spec. stats, if given, counts new and changed entries."""
     out = {}
     todo = []
     for s in specs:
         key = rank_key(enc_id, s, region)
-        cached = None if refresh else cache_get("rankings", key, RANKINGS_TTL)
+        cached = None if refresh else cache_get("rankings", key, ttl)
         if cached is not None:
             out[(s["classSlug"], s["specSlug"])] = cached
         else:
@@ -344,6 +346,14 @@ def get_rankings(api, enc_id, specs, region, refresh):
             if not isinstance(ranks, list):
                 ranks = []
             ranks = ranks[:TOP_N]
+            if stats is not None:
+                before = cache_get("rankings", key) or []
+                old = {(r.get("name"), (r.get("report") or {}).get("code")) for r in before}
+                fresh = [r for r in ranks if (r.get("name"), (r.get("report") or {}).get("code")) not in old]
+                stats["checked"] += 1
+                stats["new"] += len(fresh)
+                if before and fresh:
+                    stats["specs_changed"] += 1
             cache_put("rankings", key, ranks)
             out[(s["classSlug"], s["specSlug"])] = ranks
     return out
@@ -441,6 +451,8 @@ def process_fights(api, fights, names_by_fight, on_batch=None):
         return False
 
     todo = [k for k in fights if needs(k)]
+    if MAX_NEW:
+        todo = todo[:MAX_NEW]
     total = len(todo)
     if not total:
         log("  Everything is already loaded.")
@@ -683,6 +695,28 @@ def pick_zone(zones, zone_id):
     return live[-1] if live else None
 
 
+def prune_cache(zone, specs, region):
+    """Delete saved logs that no longer appear in anyone's top 10."""
+    keep = set()
+    for b in zone["encounters"]:
+        for s in specs:
+            for r in cache_get("rankings", rank_key(b["id"], s, region)) or []:
+                rep = r.get("report") or {}
+                if rep.get("code") and rep.get("fightID") is not None:
+                    keep.add(hashlib.sha1(f"{rep['code']}|{int(rep['fightID'])}".encode()).hexdigest()[:20] + ".json")
+    removed = 0
+    for kind in ("fights", "talents"):
+        d = os.path.join(CACHE_DIR, kind)
+        for fn in os.listdir(d) if os.path.isdir(d) else []:
+            if fn not in keep:
+                try:
+                    os.remove(os.path.join(d, fn))
+                    removed += 1
+                except OSError:
+                    pass
+    log(f"Removed {removed} saved logs that have dropped out of the top 10.")
+
+
 def build_from_cache(zone, specs, bosses, region, api=None):
     """Build the page using only saved data. Bosses with no saved rankings are left out."""
     item_names = {int(k): v for k, v in (cache_get("items", "names") or {}).items()}
@@ -776,9 +810,15 @@ def run(args):
     try:
         # Rankings for every chosen boss first, so the page lists all specs straight away
         ranks_by_boss = {}
+        rstats = {"checked": 0, "new": 0, "specs_changed": 0}
+        ttl = args.rank_age * 3600 if args.rank_age is not None else RANKINGS_TTL
         for b in bosses:
-            log(f"{b['name']}: fetching top 10 per spec...")
-            ranks_by_boss[b["id"]] = get_rankings(api, b["id"], specs, args.region, args.refresh)
+            log(f"{b['name']}: checking top 10 per spec...")
+            ranks_by_boss[b["id"]] = get_rankings(api, b["id"], specs, args.region,
+                                                  args.refresh, ttl, rstats)
+        if rstats["checked"]:
+            log(f"\nChecked {rstats['checked']} spec rankings: "
+                f"{rstats['new']} new entries across {rstats['specs_changed']} specs.")
         rebuild()
         open_page()
         opened = True
@@ -797,6 +837,8 @@ def run(args):
                         names.setdefault(k, set()).add(r.get("name", ""))
         fights = sorted(best, key=lambda k: best[k])
         process_fights(api, fights, names, on_batch=rebuild)
+        if args.prune:
+            prune_cache(zone, specs, args.region)
         loaded, total = build_from_cache(zone, specs, zone["encounters"], args.region, api)
         log(f"\nDone: {loaded} of {total} players loaded ({api.calls} API requests).")
         log("Refresh the page in your browser to see everything.")
@@ -1539,8 +1581,14 @@ def main():
     ap.add_argument("--deadline", type=float, metavar="MINUTES",
                     help="stop fetching after this many minutes and save the page")
     ap.add_argument("--no-open", action="store_true", help="don't open a browser (for servers)")
+    ap.add_argument("--rank-age", type=float, metavar="HOURS",
+                    help="reuse saved rankings younger than this (default 12)")
+    ap.add_argument("--max-new", type=int, metavar="N",
+                    help="read at most N new logs this run")
+    ap.add_argument("--prune", action="store_true",
+                    help="after updating, delete saved logs that dropped out of the top 10")
     args = ap.parse_args()
-    global OUT_FILE, DEADLINE, OPEN_BROWSER
+    global OUT_FILE, DEADLINE, OPEN_BROWSER, MAX_NEW
     if args.out:
         OUT_FILE = os.path.abspath(args.out)
         os.makedirs(os.path.dirname(OUT_FILE) or ".", exist_ok=True)
@@ -1548,6 +1596,8 @@ def main():
         DEADLINE = time.time() + args.deadline * 60
     if args.no_open:
         OPEN_BROWSER = False
+    if args.max_new:
+        MAX_NEW = args.max_new
     try:
         if args.demo:
             demo(args)
