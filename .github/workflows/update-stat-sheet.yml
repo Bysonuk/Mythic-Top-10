@@ -50,7 +50,9 @@ jobs:
         run: |
           python wcl_mythic_stats.py --all --no-open \
             --out site/index.html \
-            --deadline 320
+            --deadline 320 \
+            --rank-age 20 \
+            --prune
 
       - name: Save the updated cache and page
         run: |
