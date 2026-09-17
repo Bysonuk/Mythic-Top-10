@@ -1,0 +1,4 @@
+wcl_credentials.json
+mythic_stat_sheet.html
+__pycache__/
+*.pyc
