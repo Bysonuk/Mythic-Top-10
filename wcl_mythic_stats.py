@@ -964,6 +964,9 @@ def build_from_cache(zone, specs, bosses, region, api=None, addon=False):
 
 def test_potions(api, args):
     """Try several ways of asking for potion casts on one cached log and show what comes back."""
+    if args.test_report and args.test_fight and args.test_source:
+        sample = (args.test_report, args.test_fight, args.test_source, "that player")
+        return _run_potion_tests(api, *sample)
     meta = cache_get("meta", "zones+specs")
     if not meta:
         log("Run a normal fetch first so there's some saved data to test with.")
@@ -987,7 +990,10 @@ def test_potions(api, args):
     if not sample:
         log("No saved log with a matching player was found to test with.")
         return
-    code, fid, actor_id, who = sample
+    return _run_potion_tests(api, *sample)
+
+
+def _run_potion_tests(api, code, fid, actor_id, who):
     log(f"Testing on log {code}, fight {fid}, player {who} (actor {actor_id}).\n")
 
     tries = [(f'filterExpression: "{f}"'.replace('"', '\\"').replace('filterExpression: \\"', 'filterExpression: "', 1)[:-2] + '"',
@@ -1005,6 +1011,22 @@ def test_potions(api, args):
             for ev in data[:3]:
                 log(f"      {json.dumps(ev)[:200]}")
 
+    log("\n  Buffs the player had (potions show up here as auras):")
+    q = ('{ reportData { report(code: "%s") { table(fightIDs: [%d], dataType: Buffs, '
+         'sourceID: %d) } } }') % (code, fid, actor_id)
+    d, errors = api.query(q, allow_errors=True, with_errors=True)
+    if errors:
+        log("      rejected: " + "; ".join(e.get('message', '?') for e in errors)[:200])
+    else:
+        tbl = (((d or {}).get("reportData") or {}).get("report") or {}).get("table")
+        tbl = unwrap(tbl or {}, "data")
+        auras = (tbl or {}).get("auras") if isinstance(tbl, dict) else None
+        if isinstance(auras, list):
+            for a in auras[:25]:
+                log(f"      {a.get('guid')}  {a.get('name')}  x{a.get('totalUses', a.get('totalUptime', '?'))}")
+        else:
+            log(f"      {json.dumps(tbl)[:600]}")
+
     log("\n  Unfiltered casts, to see what the fields look like:")
     q = ('{ reportData { report(code: "%s") { events(fightIDs: [%d], dataType: Casts, '
          'sourceID: %d, limit: 5) { data } } } }') % (code, fid, actor_id)
@@ -1015,6 +1037,22 @@ def test_potions(api, args):
         data = ((((d or {}).get("reportData") or {}).get("report") or {}).get("events") or {}).get("data") or []
         for ev in data[:5]:
             log(f"      {json.dumps(ev)[:200]}")
+    log("\n  Fight summary (it sometimes lists consumables directly):")
+    q = ('{ reportData { report(code: "%s") { table(fightIDs: [%d], dataType: Summary, '
+         'sourceID: %d) } } }') % (code, fid, actor_id)
+    d, errors = api.query(q, allow_errors=True, with_errors=True)
+    if errors:
+        log("      rejected: " + "; ".join(e.get('message', '?') for e in errors)[:200])
+    else:
+        tbl = (((d or {}).get("reportData") or {}).get("report") or {}).get("table")
+        text = json.dumps(unwrap(tbl or {}, "data"))
+        for word in ("potion", "Potion"):
+            i = text.find(word)
+            if i > 0:
+                log(f"      ...{text[max(0, i - 200):i + 300]}...")
+                break
+        else:
+            log(f"      nothing mentioning potions. First part: {text[:400]}")
     log("\nSend these lines to Claude and the potion lookup can be fixed to match.")
 
 
@@ -2523,7 +2561,10 @@ def main():
     ap.add_argument("--compact", action="store_true",
                     help="shrink the saved cache folder and drop logs that are no longer needed")
     ap.add_argument("--test-potions", action="store_true",
-                    help="show what Warcraft Logs returns when asked for potion casts")
+                    help="show what Warcraft Logs returns for potion casts and auras")
+    ap.add_argument("--test-report", help="use this report code with --test-potions")
+    ap.add_argument("--test-fight", type=int, help="fight ID to use with --test-report")
+    ap.add_argument("--test-source", type=int, help="source/actor ID to use with --test-report")
     ap.add_argument("--limit", action="store_true",
                     help="show how many API points this key has used this hour, then exit")
     ap.add_argument("--prune", action="store_true",
