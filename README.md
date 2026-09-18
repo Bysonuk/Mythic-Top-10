@@ -1,118 +1,148 @@
 # Mythic Stat Sheet
 
-Top 10 Mythic raid logs for every spec in World of Warcraft, with each player's
-secondary stats, trinkets and talent import code. Data comes from Warcraft Logs.
+The top 10 Mythic raid logs for every spec in World of Warcraft, with each
+player's secondary stats, trinkets and talent import code, so you don't have to
+click through Warcraft Logs one ranking at a time.
 
-The page rebuilds itself once a day through GitHub Actions and is served free on
-GitHub Pages.
+Two ways to read it:
+
+- **A website**, rebuilt and published automatically: <https://bysonuk.github.io/wcltop10/>
+- **An in-game addon**, `/ms`, with a Copy button for every talent build
+
+All data comes from public Warcraft Logs rankings.
 
 ---
 
-## Setting it up (about 10 minutes)
+## What it shows
+
+For every spec, on every Mythic boss of the current raid:
+
+- The top 10 players, with DPS or HPS, item level, guild, realm, kill time and a
+  link to the log
+- Critical Strike, Haste, Mastery and Versatility at the pull, as ratings and as
+  a share of their total
+- Both trinkets, with item levels
+- The talent import code, ready to paste into the game
+
+The website adds a "Compare all specs" grid showing every spec's stat split side
+by side, per-spec stat ranges across the top 10, trinket usage counts, and talent
+builds grouped so the common one stands out.
+
+---
+
+## How it runs
+
+One Python script does everything: fetch, build the page, build the addon.
+
+A GitHub Actions workflow runs it on a schedule, commits the results and
+publishes the site to GitHub Pages. Downloaded logs are cached, so each run only
+fetches entries that are new to the top 10, and logs are dropped from the cache
+when players fall out of the rankings.
+
+Warcraft Logs allows 3,600 API points an hour. A run either waits for the reset
+or stops and publishes what it has, depending on the flags. Nothing is lost
+either way: the next run carries on from the cache.
+
+---
+
+## Setting up your own copy
 
 ### 1. Create the repository
 
-On github.com, click **New repository**.
+Make a **public** repo. GitHub Pages and unlimited Actions minutes are free on
+public repos; private repos need a paid plan for Pages.
 
-- Name it something like `mythic-stats`.
-- Set it to **Public**. GitHub Pages and unlimited Actions minutes are free on
-  public repos; private repos need a paid plan for Pages.
-- Tick **Add a README file** so the repo isn't empty, then click **Create**.
+Upload `wcl_mythic_stats.py`, `cf_upload.py`, `README.md` and `.gitignore`, then
+create `.github/workflows/update-stat-sheet.yml` and paste the workflow in.
 
-Anyone with the link will be able to see the page. All of the data on it is
-already public on Warcraft Logs, so this is usually fine. If you want it private,
-see "Keeping it private" at the bottom.
+### 2. Add your Warcraft Logs key
 
-### 2. Add the files
+Create an API client at <https://www.warcraftlogs.com/api/clients>. Redirect URL
+`http://localhost`, and leave "Public Client" unticked.
 
-In the repo, click **Add file**, then **Upload files**, and upload:
+In **Settings → Secrets and variables → Actions**, add:
 
-- `wcl_mythic_stats.py`
-- `.gitignore`
-- this `README.md` (replacing the one GitHub made)
+| Name                | Value              |
+| ------------------- | ------------------ |
+| `WCL_CLIENT_ID`     | your Client ID     |
+| `WCL_CLIENT_SECRET` | your Client Secret |
 
-Then create the workflow file. Click **Add file**, **Create new file**, and type
-this exact name in the box:
+### 3. Turn on Pages
 
-```
-.github/workflows/update-stat-sheet.yml
-```
+**Settings → Pages → Source → GitHub Actions**.
 
-Paste in the contents of `update-stat-sheet.yml`, then click **Commit changes**.
+### 4. Run it
 
-### 3. Add your Warcraft Logs key
+**Actions → Update stat sheet → Run workflow.**
 
-Go to **Settings**, then **Secrets and variables**, then **Actions**, and click
-**New repository secret** twice:
-
-| Name                | Value                            |
-| ------------------- | -------------------------------- |
-| `WCL_CLIENT_ID`     | your Client ID                   |
-| `WCL_CLIENT_SECRET` | your Client Secret               |
-
-Secrets are hidden from anyone viewing the repo and are not printed in the logs.
-Create a fresh pair at <https://www.warcraftlogs.com/api/clients> if you'd rather
-not reuse an old one.
-
-### 4. Turn on Pages
-
-Go to **Settings**, then **Pages**, and under **Source** choose
-**GitHub Actions**.
-
-### 5. Run it
-
-Go to the **Actions** tab, click **Update stat sheet**, then **Run workflow**.
-
-The first run does the heavy lifting and will probably stop after about five
-hours with part of the raid loaded, because Warcraft Logs limits how much can be
-fetched per hour. That's expected. Run it again (or wait for the next morning)
-and it carries on from where it stopped. Once it's caught up, daily runs are
-quick, because only new logs are fetched.
-
-When a run finishes, your page is at:
-
-```
-https://<your-username>.github.io/<repo-name>/
-```
+The first fill takes several runs, because there are a couple of thousand logs to
+read and the hourly API limit caps how fast that can go. Each run publishes what
+it has, so the site fills in as it goes. Once it's caught up, a run is just the
+rankings check plus any new entries.
 
 ---
 
-## Speeding up the first load
+## Publishing the addon to CurseForge
 
-If you've already been running the script on your PC, upload your `wcl_cache`
-folder to the repo. Everything in it is reused, so the first run online has far
-less to do.
+`cf_upload.py` uploads the built zip through CurseForge's API, at most once a day
+and only when the addon has changed. Add two more secrets:
 
-The cache only stores what the page needs, so it stays small: roughly a few
-kilobytes per log.
+| Name            | Value                                                  |
+| --------------- | ------------------------------------------------------ |
+| `CF_API_TOKEN`  | from <https://legacy.curseforge.com/account/api-tokens> |
+| `CF_PROJECT_ID` | the numeric project ID on your CurseForge project page  |
+
+Without them the step does nothing, so the rest still works. Leave CurseForge's
+own **Automatic Packaging** set to "No automatic packaging": it reacts to GitHub
+releases, not to files in the repo.
 
 ---
 
-## Changing things
+## Running it on your own PC
 
-- **Update time:** edit the `cron` line in the workflow. It's in UTC, so
-  `0 6 * * *` is 7am UK time in summer and 6am in winter.
-- **One region only:** add `--region EU` to the python line in the workflow.
-- **A different raid:** add `--zone <id>`. Run
-  `python wcl_mythic_stats.py --list-zones` on your PC to see the IDs.
-- **Run it by hand at any time:** Actions tab, **Update stat sheet**,
-  **Run workflow**.
+```
+python wcl_mythic_stats.py --all          # fetch everything and open the page
+python wcl_mythic_stats.py --offline      # rebuild the page from saved data
+python wcl_mythic_stats.py --offline --addon   # also build the addon folder
+python wcl_mythic_stats.py --limit        # how much API allowance is left
+python wcl_mythic_stats.py --compact      # shrink the cache folder
+python wcl_mythic_stats.py --list-zones   # raid zone IDs
+```
 
-## Keeping it private
+Needs Python 3.8 or newer and nothing else. On the first run it asks for your
+Client ID and Secret and saves them to `wcl_credentials.json` next to the script.
+Never commit that file; `.gitignore` blocks it.
 
-GitHub Pages needs a paid plan to serve a private repo. Free alternatives:
+Useful flags: `--region EU`, `--zone <id>`, `--rank-age <hours>`,
+`--max-new <n>`, `--deadline <minutes>`, `--stop-at-limit`, `--prune`,
+`--out <path>`, `--interface <number>`, `--no-open`.
 
-- **Cloudflare Pages** works with private GitHub repos on its free plan. Connect
-  the repo, set the build output folder to `site`, and use a Cron Trigger for the
-  daily rebuild.
-- Or keep the repo private with no Pages at all, and download
-  `site/index.html` from the Actions artifact when you want to look at it.
+---
+
+## Installing the addon
+
+Download `MythicStats.zip` from the site's header link, or from CurseForge, and
+extract it into:
+
+```
+World of Warcraft\_retail_\Interface\AddOns\
+```
+
+You should end up with `AddOns\MythicStats\MythicStats.toc`. Type `/ms` in game.
+
+Pick a class with the arrows, a spec below them, and a boss in the middle column.
+Each row has a **Talents** button: click it, press **Ctrl+C**, then open your
+talent window, click the loadout dropdown and choose **Import**. Addons aren't
+allowed to change talents for you, so that step is Blizzard's.
+
+---
 
 ## Notes
 
-- Scheduled workflows on public repos are switched off after 60 days with no
-  activity. The daily commit counts as activity, so this keeps itself alive as
-  long as the data keeps changing.
-- If a run fails, open it in the Actions tab and read the last few lines. Errors
-  mentioning a field or argument usually mean Warcraft Logs changed their API.
-- Never commit `wcl_credentials.json`. The included `.gitignore` blocks it.
+- Retail only, Mythic difficulty. Healers are ranked by HPS and everyone else by
+  DPS, the same as on Warcraft Logs.
+- Scheduled workflows on public repos stop after 60 days without activity. Each
+  run commits something, so this keeps itself awake.
+- If Warcraft Logs is down or the key is rejected, the run still publishes the
+  page from saved data and retries.
+- Not affiliated with Warcraft Logs or Blizzard.
