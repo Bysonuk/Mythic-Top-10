@@ -190,6 +190,8 @@ class WCL:
         self.points = 0
         self.limit = 0
         self.talents_ok = True
+        self.potions_ok = True
+        self.potion_filter = 0
 
     def auth(self):
         basic = base64.b64encode(f"{self.cid}:{self.secret}".encode()).decode()
@@ -456,6 +458,62 @@ def fetch_talents(api, wanted):
             log("    Warcraft Logs didn't accept the talent request, so talents are skipped this run.")
 
 
+POTION_FILTERS = [
+    'ability.name CONTAINS "Potion"',
+    'ability.name LIKE "%Potion%"',
+    'ability.name contains "potion"',
+]
+
+
+def fetch_potions(api, wanted):
+    """wanted: {(code, fid): [actorID, ...]}. Saves the combat potion each player cast."""
+    if not api.potions_ok:
+        return
+    parts, index = [], []
+    for n, ((code, fid), ids) in enumerate(wanted.items()):
+        flt = POTION_FILTERS[api.potion_filter].replace('"', '\\"')
+        parts.append(f'p{n}: report(code: "{code}") {{ events(fightIDs: [{int(fid)}], '
+                     f'dataType: Casts, limit: 300, filterExpression: "{flt}") {{ data }} }}')
+        index.append(((code, fid), ids))
+    q = "{ reportData { " + " ".join(parts) + " } }"
+    api.wait_for_reset()
+    try:
+        d, errors = api.query(q, allow_errors=True, with_errors=True)
+    except ApiDown:
+        raise
+    except Exception as e:
+        log(f"    Skipped potions for {len(wanted)} logs ({e})")
+        return
+    rd = (d or {}).get("reportData") or {}
+    if not any(rd.get(f"p{n}") for n in range(len(index))) and errors:
+        # This filter isn't understood; try the next one, then give up on potions
+        api.potion_filter += 1
+        if api.potion_filter < len(POTION_FILTERS):
+            log("    Trying a different way of asking for potions...")
+            return fetch_potions(api, wanted)
+        api.potions_ok = False
+        msg = "; ".join(e.get("message", "?") for e in errors)[:160]
+        log(f"    Warcraft Logs wouldn't return potion casts, so they're skipped ({msg}).")
+        return
+    for n, (key, ids) in enumerate(index):
+        rep = rd.get(f"p{n}")
+        if rep is None:
+            continue
+        events = ((rep.get("events") or {}).get("data")) or []
+        have = cache_get("potions", f"{key[0]}|{key[1]}") or {}
+        for a in ids:
+            have.setdefault(str(a), "")
+        for ev in events:
+            sid = ev.get("sourceID")
+            if sid is None or str(sid) not in have or have[str(sid)]:
+                continue
+            name = ev.get("ability", {}).get("name") if isinstance(ev.get("ability"), dict) else None
+            guid = ev.get("abilityGameID") or (ev.get("ability") or {}).get("guid")
+            if name or guid:
+                have[str(sid)] = {"name": name or "", "id": int(guid or 0)}
+        cache_put("potions", f"{key[0]}|{key[1]}", have)
+
+
 def process_fights(api, fights, names_by_fight, on_batch=None):
     """fights: list of (code, fightID), most important first.
     Reads stats/trinkets for new logs, then talent codes for the ranked players."""
@@ -463,13 +521,14 @@ def process_fights(api, fights, names_by_fight, on_batch=None):
         fight = load_fight(key[0], key[1])
         if fight is None:
             return True
-        if not api.talents_ok:
-            return False
-        have = cache_get("talents", f"{key[0]}|{key[1]}") or {}
-        for nm in names_by_fight.get(key, ()):
-            a = find_actor(fight, nm)
-            if a and a.get("id") is not None and str(a["id"]) not in have:
-                return True
+        for kind, on in (("talents", api.talents_ok), ("potions", api.potions_ok)):
+            if not on:
+                continue
+            have = cache_get(kind, f"{key[0]}|{key[1]}") or {}
+            for nm in names_by_fight.get(key, ()):
+                a = find_actor(fight, nm)
+                if a and a.get("id") is not None and str(a["id"]) not in have:
+                    return True
         return False
 
     todo = [k for k in fights if needs(k)]
@@ -479,20 +538,24 @@ def process_fights(api, fights, names_by_fight, on_batch=None):
     if not total:
         log("  Everything is already loaded.")
         return
-    log(f"Reading {total} logs for stats, trinkets and talents...")
+    log(f"Reading {total} logs for stats, trinkets, talents and potions...")
     done = 0
     for i in range(0, total, FIGHTS_PER_QUERY):
         chunk = todo[i:i + FIGHTS_PER_QUERY]
         new = [k for k in chunk if load_fight(k[0], k[1]) is None]
         if new:
             fetch_stats(api, new)
-        if api.talents_ok:
+        for kind, fetch in (("talents", fetch_talents), ("potions", fetch_potions)):
+            if kind == "talents" and not api.talents_ok:
+                continue
+            if kind == "potions" and not api.potions_ok:
+                continue
             wanted = {}
             for k in chunk:
                 fight = load_fight(k[0], k[1])
                 if fight is None:
                     continue
-                have = cache_get("talents", f"{k[0]}|{k[1]}") or {}
+                have = cache_get(kind, f"{k[0]}|{k[1]}") or {}
                 ids = []
                 for nm in names_by_fight.get(k, ()):
                     a = find_actor(fight, nm)
@@ -501,7 +564,7 @@ def process_fights(api, fights, names_by_fight, on_batch=None):
                 if ids:
                     wanted[k] = ids
             if wanted:
-                fetch_talents(api, wanted)
+                fetch(api, wanted)
         done += len(chunk)
         check_time()
         pts = f"  (API points used this hour: {api.points}/{api.limit})" if api.limit else ""
@@ -627,6 +690,7 @@ def build_player(rank_entry, idx, fight, item_names):
         "trinkets": [],
         "loaded": bool(fight),
         "talents": None,
+        "potion": None,
     }
     if not fight:
         return p
@@ -636,9 +700,13 @@ def build_player(rank_entry, idx, fight, item_names):
         p["talents"] = ""
     actor_id = detail.get("id") if detail else None
     if actor_id is not None and rep.get("code"):
-        tal = cache_get("talents", f"{rep['code']}|{int(rep.get('fightID') or 0)}") or {}
+        fkey = f"{rep['code']}|{int(rep.get('fightID') or 0)}"
+        tal = cache_get("talents", fkey) or {}
         if str(actor_id) in tal:
             p["talents"] = tal[str(actor_id)]  # "" means the log had no talent code
+        pot = cache_get("potions", fkey) or {}
+        if str(actor_id) in pot:
+            p["potion"] = pot[str(actor_id)]   # "" means no potion was cast in the fight
 
     if detail:
         p["stats"] = detail.get("stats")
@@ -766,7 +834,7 @@ def compact_cache(region=None):
                         if rp.get("code") and rp.get("fightID") is not None:
                             keep.add(hashlib.sha1(f"{rp['code']}|{int(rp['fightID'])}".encode()).hexdigest()[:20] + ".json")
         if keep:
-            for kind in ("fights", "talents"):
+            for kind in ("fights", "talents", "potions"):
                 d = os.path.join(CACHE_DIR, kind)
                 for fn in os.listdir(d) if os.path.isdir(d) else []:
                     if fn not in keep:
@@ -790,7 +858,7 @@ def prune_cache(zone, specs, region):
                 if rep.get("code") and rep.get("fightID") is not None:
                     keep.add(hashlib.sha1(f"{rep['code']}|{int(rep['fightID'])}".encode()).hexdigest()[:20] + ".json")
     removed = 0
-    for kind in ("fights", "talents"):
+    for kind in ("fights", "talents", "potions"):
         d = os.path.join(CACHE_DIR, kind)
         for fn in os.listdir(d) if os.path.isdir(d) else []:
             if fn not in keep:
@@ -1160,7 +1228,12 @@ def write_addon(data, addon_dir, interface):
                     "haste": round(st.get("haste") or 0) or None,
                     "mastery": round(st.get("mastery") or 0) or None,
                     "vers": round(st.get("vers") or 0) or None,
-                    "trinkets": [t["id"] for t in p.get("trinkets") or []],
+                    "trinkets": [{"id": t["id"], "name": t.get("name") or "",
+                                  "ilvl": round(t.get("ilvl") or 0)}
+                                 for t in p.get("trinkets") or []],
+                    "potion": (p.get("potion") or None) and
+                              {"id": (p["potion"] or {}).get("id") or 0,
+                               "name": (p["potion"] or {}).get("name") or ""},
                     "talents": p.get("talents") or "",
                 })
     files = ["data\\_info.lua"]
@@ -1300,7 +1373,7 @@ end
 -- Main window
 ----------------------------------------------------------------------
 local main, specButtons, bossButtons, rows = nil, {}, {}, {}
-local ROW_H = 46
+local ROW_H = 74
 
 local function currentSpecData()
   local cd = classData(state.class)
@@ -1322,14 +1395,80 @@ local function playersFor(sp)
   return out
 end
 
-local function trinketText(p)
-  if not p.trinkets or #p.trinkets == 0 then return "|cff808080No trinket data|r" end
-  local parts = {}
-  for _, id in ipairs(p.trinkets) do
-    local name = C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(id)
-    parts[#parts + 1] = name or ("Item " .. id)
+local QUESTION = "Interface\\Icons\\INV_Misc_QuestionMark"
+
+local function itemIcon(id)
+  if C_Item and C_Item.GetItemIconByID then
+    local icon = C_Item.GetItemIconByID(id)
+    if icon then return icon end
   end
-  return table.concat(parts, ", ")
+  if GetItemIcon then return GetItemIcon(id) end
+end
+
+local function itemName(id, fallback)
+  if C_Item and C_Item.GetItemNameByID then
+    local n = C_Item.GetItemNameByID(id)
+    if n then return n end
+  end
+  if fallback and fallback ~= "" then return fallback end
+  return "Item " .. id
+end
+
+local function spellIcon(id)
+  if C_Spell and C_Spell.GetSpellInfo then
+    local info = C_Spell.GetSpellInfo(id)
+    if info and info.iconID then return info.iconID end
+  end
+  if GetSpellTexture then return GetSpellTexture(id) end
+end
+
+-- One icon plus its name, used for trinkets and the potion
+local function makeSlot(parent, x, y, width)
+  local f = CreateFrame("Button", nil, parent)
+  f:SetSize(width, 18)
+  f:SetPoint("TOPLEFT", x, y)
+  f.icon = f:CreateTexture(nil, "ARTWORK")
+  f.icon:SetSize(16, 16)
+  f.icon:SetPoint("LEFT", 0, 0)
+  f.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+  f.border = f:CreateTexture(nil, "BACKGROUND")
+  f.border:SetPoint("TOPLEFT", f.icon, -1, 1)
+  f.border:SetPoint("BOTTOMRIGHT", f.icon, 1, -1)
+  f.border:SetColorTexture(0, 0, 0, 0.8)
+  f.text = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  f.text:SetPoint("LEFT", f.icon, "RIGHT", 6, 0)
+  f.text:SetPoint("RIGHT", 0, 0)
+  f.text:SetJustifyH("LEFT")
+  f:SetScript("OnEnter", function(self)
+    if not self.tipID then return end
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    if self.tipKind == "spell" then
+      GameTooltip:SetSpellByID(self.tipID)
+    else
+      GameTooltip:SetItemByID(self.tipID)
+    end
+    GameTooltip:Show()
+  end)
+  f:SetScript("OnLeave", GameTooltip_Hide)
+  f:Hide()
+  return f
+end
+
+local function fillItemSlot(slot, entry)
+  if not entry or not entry.id or entry.id == 0 then slot:Hide() return end
+  slot.icon:SetTexture(itemIcon(entry.id) or QUESTION)
+  local ilvl = entry.ilvl and entry.ilvl > 0 and ("  |cff9d9d9d" .. entry.ilvl .. "|r") or ""
+  slot.text:SetText(itemName(entry.id, entry.name) .. ilvl)
+  slot.tipID, slot.tipKind = entry.id, "item"
+  slot:Show()
+end
+
+local function fillPotionSlot(slot, potion)
+  if not potion or (not potion.name and not potion.id) then slot:Hide() return end
+  slot.icon:SetTexture((potion.id and potion.id > 0 and spellIcon(potion.id)) or QUESTION)
+  slot.text:SetText("|cff8fd6ff" .. (potion.name ~= "" and potion.name or "Potion") .. "|r")
+  slot.tipID, slot.tipKind = potion.id, "spell"
+  slot:Show()
 end
 
 local function updateRows()
@@ -1351,7 +1490,9 @@ local function updateRows()
       else
         row.stats:SetText("|cff808080No stats in this log|r")
       end
-      row.trinkets:SetText(trinketText(p))
+      fillItemSlot(row.t1, p.trinkets and p.trinkets[1])
+      fillItemSlot(row.t2, p.trinkets and p.trinkets[2])
+      fillPotionSlot(row.pot, p.potion)
       row.copy:SetShown(p.talents and p.talents ~= "")
       row.copy.code = p.talents
       row.copy.label = string.format("%s %s, #%d on %s", sp.spec, state.class, i, p.boss or "")
@@ -1423,7 +1564,7 @@ end
 
 local function createMain()
   local f = CreateFrame("Frame", "MythicStatsFrame", UIParent, "BasicFrameTemplateWithInset")
-  f:SetSize(940, 620)
+  f:SetSize(960, 860)
   f:SetPoint("CENTER")
   f:SetMovable(true); f:EnableMouse(true); f:RegisterForDrag("LeftButton")
   f:SetScript("OnDragStart", f.StartMoving)
@@ -1482,10 +1623,9 @@ local function createMain()
     row.stats:SetPoint("TOPLEFT", 44, -21)
     row.stats:SetJustifyH("LEFT")
 
-    row.trinkets = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    row.trinkets:SetPoint("TOPLEFT", 44, -34)
-    row.trinkets:SetWidth(430)
-    row.trinkets:SetJustifyH("LEFT")
+    row.t1 = makeSlot(row, 44, -34, 200)
+    row.t2 = makeSlot(row, 250, -34, 200)
+    row.pot = makeSlot(row, 44, -54, 200)
 
     row.copy = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
     row.copy:SetSize(88, 22)
@@ -1978,6 +2118,8 @@ function card(p, s, allBosses, maxShare){
     }).join("")}</div>
     <div class="prim"><span>${esc(st.primaryName)} <b class="num">${fmtInt(st.primary)}</b></span><span>Stamina <b class="num">${fmtInt(st.stamina)}</b></span></div>`
     : `<div class="pending">${pending ? "Stats not loaded yet. Run the script again to fill this in." : "This log has no stat data."}</div>`;
+  const pot = p.potion && p.potion.name
+    ? `<div><span style="color:var(--dim)">Potion</span><span>${esc(p.potion.name)}</span></div>` : "";
   const tks = p.trinkets.length
     ? p.trinkets.map(t=>`<div>${tkLink(t,true)}<small class="num">${t.ilvl?Math.round(t.ilvl):""}</small></div>`).join("")
     : `<div class="pending">${pending ? "Trinkets not loaded yet" : "No trinket data"}</div>`;
@@ -1990,7 +2132,7 @@ function card(p, s, allBosses, maxShare){
       <div class="out"><b class="num">${fmtAmt(p.amount)}</b><small>${s.metric}, ilvl ${p.ilvl?p.ilvl.toFixed(1):"–"}</small></div>
     </div>
     ${statBlock}
-    <div class="c-tk">${tks}</div>
+    <div class="c-tk">${tks}${pot}</div>
     <div class="c-tal"><span class="h">Talents</span>${
       p.talents ? talentBox(p.talents)
       : `<div class="pending">${p.talents === "" ? "This log has no talent code" : "Talents not loaded yet"}</div>`}</div>
@@ -2036,6 +2178,16 @@ function renderSpec(s){
       <small>${b.players.sort((x,y)=>x.rank-y.rank).map(p=>`#${p.rank} ${esc(p.name)}`).join(", ")}</small>
     </div>`).join("") + (builds.length>6?`<div class="pending">${builds.length-6} more builds are on the player cards below.</div>`:"")
     : `<div class="pending">No talents loaded for this spec yet. Run the script again to fetch them.</div>`;
+  const potCounts = new Map();
+  for(const p of s.players){
+    if(p.potion && p.potion.name){
+      const c = potCounts.get(p.potion.name) || {name:p.potion.name, n:0};
+      c.n++; potCounts.set(p.potion.name, c);
+    }
+  }
+  const pots = [...potCounts.values()].sort((a,b)=>b.n-a.n);
+  const potsHtml = pots.length ? pots.map(x=>`<div class="tk-row"><span class="nm">${esc(x.name)}</span><span class="ct num">${x.n}</span>
+      <span class="bar"><i style="width:${x.n/pots[0].n*100}%"></i></span></div>`).join("") : "";
   const tkMax = sum.trinkets[0]?.n || 1;
   const trinkets = sum.trinkets.length ? sum.trinkets.slice(0,8).map(t=>`
     <div class="tk-row"><span class="nm">${tkLink(t)}</span><span class="ct num">${t.n} of ${sum.withTk}</span>
@@ -2059,7 +2211,8 @@ function renderSpec(s){
       ${sum.n ? `
       <div class="panels">
         <section class="panel"><h3>Secondary stat ranges<small>Dots are players, the white line is the average</small></h3>${ranges}</section>
-        <section class="panel"><h3>Trinkets used<small>Across the top ${sum.withTk || sum.n}</small></h3>${trinkets}</section>
+        <section class="panel"><h3>Trinkets used<small>Across the top ${sum.withTk || sum.n}</small></h3>${trinkets}
+          ${potsHtml ? `<h3 style="margin-top:1.1rem">Combat potions</h3>${potsHtml}` : ""}</section>
         <section class="panel"><h3>Talent builds<small>${withTal ? `${builds.length} different across ${withTal} players` : ""}</small></h3>${buildsHtml}</section>
       </div>
       <div class="players-head"><h3>${allBosses ? "Top players by boss" : "Top 10 players"}</h3>
