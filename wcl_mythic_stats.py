@@ -60,7 +60,7 @@ DEADLINE = None   # unix time to stop by, set with --deadline
 MAX_NEW = 0       # cap on logs read per run, set with --max-new
 STOP_AT_LIMIT = False  # stop instead of waiting for the hourly limit (--stop-at-limit)
 ADDON_DIR = None  # where to write the in-game addon, set with --addon
-INTERFACE = "120105"
+INTERFACE = "120100,120105"
 RETRY_TRIES = 6   # how many times to wait and retry when the API is unavailable
 
 
@@ -2321,8 +2321,8 @@ def main():
     ap.add_argument("--no-open", action="store_true", help="don't open a browser (for servers)")
     ap.add_argument("--addon", nargs="?", const="MythicStats", metavar="FOLDER",
                     help="also write the in-game addon into this folder")
-    ap.add_argument("--interface", default="120105",
-                    help="addon Interface number(s), comma separated (default 120105)")
+    ap.add_argument("--interface", default="120100,120105",
+                    help="addon Interface number(s), comma separated (default 120100,120105)")
     ap.add_argument("--rank-age", type=float, metavar="HOURS",
                     help="reuse saved rankings younger than this (default 12)")
     ap.add_argument("--max-new", type=int, metavar="N",

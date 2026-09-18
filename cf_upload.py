@@ -10,7 +10,7 @@ Needs:
   CF_PROJECT_ID  the numeric project ID shown on your CurseForge project page
 
 Usage:
-  python cf_upload.py site/MythicStats.zip --interface 120105 --marker .cf_last_upload
+  python cf_upload.py site/MythicStats.zip --interface 120100,120105 --marker .cf_last_upload
   python cf_upload.py site/MythicStats.zip --force          # ignore the once-a-day rule
 """
 
@@ -77,7 +77,7 @@ def multipart(fields, filename, filedata):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("zip_path")
-    ap.add_argument("--interface", default="120105",
+    ap.add_argument("--interface", default="120100,120105",
                     help="Interface number(s) the file supports, comma separated")
     ap.add_argument("--marker", default=".cf_last_upload")
     ap.add_argument("--display-name", default=None)
