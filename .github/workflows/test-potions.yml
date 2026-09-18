@@ -1,0 +1,41 @@
+name: Test potions
+
+# Run this by hand from the Actions tab when potions aren't showing up.
+# It only reads from Warcraft Logs and prints what it finds; nothing is saved.
+
+on:
+  workflow_dispatch:
+    inputs:
+      report:
+        description: "Report code (the letters after /reports/ in the URL)"
+        required: true
+        default: "yTf1ZBGV6Yc8RXPr"
+      fight:
+        description: "Fight ID (the fight= number in the URL)"
+        required: true
+        default: "39"
+      source:
+        description: "Source ID (the source= number in the URL)"
+        required: true
+        default: "541"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Ask Warcraft Logs about potions
+        env:
+          WCL_CLIENT_ID: ${{ secrets.WCL_CLIENT_ID }}
+          WCL_CLIENT_SECRET: ${{ secrets.WCL_CLIENT_SECRET }}
+        run: |
+          python wcl_mythic_stats.py --test-potions \
+            --test-report "${{ inputs.report }}" \
+            --test-fight "${{ inputs.fight }}" \
+            --test-source "${{ inputs.source }}"
