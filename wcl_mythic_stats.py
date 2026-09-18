@@ -57,6 +57,7 @@ from datetime import datetime, timezone
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEADLINE = None   # unix time to stop by, set with --deadline
 MAX_NEW = 0       # cap on logs read per run, set with --max-new
+STOP_AT_LIMIT = False  # stop instead of waiting for the hourly limit (--stop-at-limit)
 RETRY_TRIES = 6   # how many times to wait and retry when the API is unavailable
 
 
@@ -272,6 +273,9 @@ class WCL:
         else:
             wait = 300
         left = time_left()
+        if STOP_AT_LIMIT:
+            log(f"\n  Hourly API limit reached ({wait // 60} min until it resets).")
+            raise TimeUp()
         if left is not None and wait > left:
             raise TimeUp()
         log(f"\n  Hourly API limit reached. Waiting {wait // 60} min {wait % 60} s, then continuing...")
@@ -959,7 +963,8 @@ def run(args):
 
         except (KeyboardInterrupt, TimeUp) as e:
             loaded, total = build_from_cache(zone, specs, zone["encounters"], args.region)
-            why = "Out of time for this run." if isinstance(e, TimeUp) else "Stopped."
+            why = "Stopped." if isinstance(e, KeyboardInterrupt) else (
+                "Used up this hour's API allowance." if STOP_AT_LIMIT else "Out of time for this run.")
             log(f"\n{why} Page saved with {loaded} of {total} players loaded.")
             log("Run the script again later to carry on from here.")
             if not opened:
@@ -1740,6 +1745,8 @@ def main():
                     help="reuse saved rankings younger than this (default 12)")
     ap.add_argument("--max-new", type=int, metavar="N",
                     help="read at most N new logs this run")
+    ap.add_argument("--stop-at-limit", action="store_true",
+                    help="stop and save when the hourly API limit is hit, instead of waiting")
     ap.add_argument("--compact", action="store_true",
                     help="shrink the saved cache folder and drop logs that are no longer needed")
     ap.add_argument("--limit", action="store_true",
@@ -1747,7 +1754,7 @@ def main():
     ap.add_argument("--prune", action="store_true",
                     help="after updating, delete saved logs that dropped out of the top 10")
     args = ap.parse_args()
-    global OUT_FILE, DEADLINE, OPEN_BROWSER, MAX_NEW
+    global OUT_FILE, DEADLINE, OPEN_BROWSER, MAX_NEW, STOP_AT_LIMIT
     if args.out:
         OUT_FILE = os.path.abspath(args.out)
         os.makedirs(os.path.dirname(OUT_FILE) or ".", exist_ok=True)
@@ -1757,6 +1764,8 @@ def main():
         OPEN_BROWSER = False
     if args.max_new:
         MAX_NEW = args.max_new
+    if args.stop_at_limit:
+        STOP_AT_LIMIT = True
     try:
         if args.demo:
             demo(args)
