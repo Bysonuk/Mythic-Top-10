@@ -96,6 +96,10 @@ jobs:
             ls -lh site/MythicStats.zip
           fi
 
+      - name: Publish the desktop updater
+        run: |
+          if [ -f Update-MythicStats.bat ]; then cp Update-MythicStats.bat site/; fi
+
       - name: Upload the addon to CurseForge (once a day, if it changed)
         env:
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
