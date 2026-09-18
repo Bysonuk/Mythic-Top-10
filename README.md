@@ -6,7 +6,7 @@ click through Warcraft Logs one ranking at a time.
 
 Two ways to read it:
 
-- **A website**, rebuilt and published automatically: <https://bysonuk.github.io/wcltop10/>
+- **A website**, rebuilt and published automatically: <https://bysonuk.github.io/Mythic-Top-10/>
 - **An in-game addon**, `/ms`, with a Copy button for every talent build
 
 All data comes from public Warcraft Logs rankings.
@@ -136,6 +136,12 @@ talent window, click the loadout dropdown and choose **Import**. Addons aren't
 allowed to change talents for you, so that step is Blizzard's.
 
 ---
+
+## Links
+
+- Site: <https://bysonuk.github.io/Mythic-Top-10/>
+- Repo: <https://github.com/Bysonuk/Mythic-Top-10>
+- Addon downloads: the Releases panel on the repo, or the download link in the site header
 
 ## Notes
 
