@@ -2,7 +2,10 @@ name: Update stat sheet
 
 on:
   schedule:
-    - cron: "0 6 * * *"      # 06:00 UTC daily (07:00 UK in summer, 06:00 in winter)
+    # Hourly: each run spends that hour's API allowance, then publishes.
+    # Once the raid is fully loaded you can switch to the daily line below.
+    - cron: "5 * * * *"
+    # - cron: "0 6 * * *"    # 06:00 UTC daily (07:00 UK in summer, 06:00 in winter)
   workflow_dispatch:          # lets you run it by hand from the Actions tab
 
 permissions:
@@ -17,12 +20,14 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 350      # GitHub's own limit is 360
+    timeout-minutes: 50       # must finish before the next run starts
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # full history, so the save step can rebase
 
       - uses: actions/setup-python@v5
         with:
@@ -50,7 +55,8 @@ jobs:
         run: |
           python wcl_mythic_stats.py --all --no-open \
             --out site/index.html \
-            --deadline 320 \
+            --deadline 40 \
+            --stop-at-limit \
             --rank-age 20 \
             --prune
 
@@ -61,10 +67,26 @@ jobs:
           git add -A wcl_cache site
           if git diff --staged --quiet; then
             echo "Nothing changed."
-          else
-            git commit -m "Update stat sheet [skip ci]"
-            git push
+            exit 0
           fi
+          git commit -m "Update stat sheet [skip ci]"
+          # If the repo changed while this run was going (an upload, say), rebase and retry.
+          for attempt in 1 2 3 4 5; do
+            if git push; then
+              echo "Saved."
+              exit 0
+            fi
+            echo "Push rejected, bringing in the newer changes (attempt $attempt)..."
+            git pull --rebase --autostash origin ${{ github.ref_name }} || {
+              echo "Rebase hit a conflict; keeping this run's data files."
+              git checkout --ours -- wcl_cache site 2>/dev/null || true
+              git add -A wcl_cache site
+              GIT_EDITOR=true git rebase --continue || git rebase --abort
+            }
+            sleep 5
+          done
+          echo "Could not save after 5 tries."
+          exit 1
 
       - uses: actions/configure-pages@v5
 
