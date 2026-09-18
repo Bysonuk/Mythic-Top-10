@@ -57,16 +57,10 @@ from datetime import datetime, timezone
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEADLINE = None   # unix time to stop by, set with --deadline
 MAX_NEW = 0       # cap on logs read per run, set with --max-new
-STOP_AT_LIMIT = False  # stop instead of waiting for the hourly limit (--stop-at-limit)
-RETRY_TRIES = 6   # how many times to wait and retry when the API is unavailable
 
 
 class TimeUp(Exception):
     """Raised when the run has used its allotted time (see --deadline)."""
-
-
-class ApiDown(Exception):
-    """Raised when Warcraft Logs can't be used right now (key rejected, site down)."""
 
 CRED_FILE = os.path.join(HERE, "wcl_credentials.json")
 CACHE_DIR = os.path.join(HERE, "wcl_cache")
@@ -202,12 +196,11 @@ class WCL:
             with urllib.request.urlopen(req, timeout=30) as r:
                 self.token = json.load(r)["access_token"]
         except urllib.error.HTTPError as e:
-            if e.code in (400, 401, 403):
-                raise ApiDown("Warcraft Logs rejected the Client ID or Secret. "
-                              f"Check them, or delete {CRED_FILE} and run again to re-enter them.")
-            raise ApiDown(f"Warcraft Logs returned an error while signing in ({e.code}).")
-        except urllib.error.URLError as e:
-            raise ApiDown(f"Couldn't reach Warcraft Logs ({e}).")
+            if e.code in (400, 401):
+                log("\nWarcraft Logs rejected the Client ID or Secret.")
+                log(f"Check them, or delete {CRED_FILE} and run again to re-enter them.")
+                sys.exit(1)
+            raise
 
     def query(self, q, variables=None, allow_errors=False, with_errors=False):
         if not self.token:
@@ -229,23 +222,20 @@ class WCL:
                 self.calls += 1
             except urllib.error.HTTPError as e:
                 if e.code == 401:
-                    self.token = None
                     self.auth()
                     continue
-                if e.code == 403:
-                    raise ApiDown("Warcraft Logs refused this key (403). It may have been cancelled.")
                 if e.code == 429:
                     self.wait_for_reset(force=True)
                     continue
                 if e.code >= 500 and attempt < 5:
                     time.sleep(5 * (attempt + 1))
                     continue
-                raise ApiDown(f"Warcraft Logs returned an error ({e.code}).")
-            except urllib.error.URLError as e:
+                raise
+            except urllib.error.URLError:
                 if attempt < 5:
                     time.sleep(5 * (attempt + 1))
                     continue
-                raise ApiDown(f"Couldn't reach Warcraft Logs ({e}).")
+                raise
             if res.get("errors") and not allow_errors:
                 msgs = "; ".join(e.get("message", "?") for e in res["errors"])
                 if "rate limit" in msgs.lower():
@@ -255,7 +245,7 @@ class WCL:
             if with_errors:
                 return res.get("data") or {}, res.get("errors") or []
             return res.get("data") or {}
-        raise ApiDown("Warcraft Logs kept failing, so it's probably having trouble right now.")
+        raise RuntimeError("Warcraft Logs API kept failing, try again later.")
 
     def wait_for_reset(self, force=False):
         try:
@@ -273,9 +263,6 @@ class WCL:
         else:
             wait = 300
         left = time_left()
-        if STOP_AT_LIMIT:
-            log(f"\n  Hourly API limit reached ({wait // 60} min until it resets).")
-            raise TimeUp()
         if left is not None and wait > left:
             raise TimeUp()
         log(f"\n  Hourly API limit reached. Waiting {wait // 60} min {wait % 60} s, then continuing...")
@@ -400,8 +387,6 @@ def fetch_stats(api, chunk):
     api.wait_for_reset()
     try:
         d = api.query(q, allow_errors=True)
-    except ApiDown:
-        raise
     except Exception as e:
         log(f"    Skipped {len(chunk)} logs ({e})")
         return
@@ -427,8 +412,6 @@ def fetch_talents(api, wanted):
     api.wait_for_reset()
     try:
         d, errors = api.query(q, allow_errors=True, with_errors=True)
-    except ApiDown:
-        raise
     except Exception as e:
         log(f"    Skipped talents for {len(wanted)} logs ({e})")
         return
@@ -851,22 +834,6 @@ def build_from_cache(zone, specs, bosses, region, api=None):
     return loaded, total
 
 
-def rebuild_offline(args):
-    """Build the page from saved data alone. Used when the API can't be reached."""
-    meta = cache_get("meta", "zones+specs")
-    if not meta:
-        return False
-    zone = pick_zone(meta["zones"], args.zone)
-    if not zone:
-        return False
-    try:
-        loaded, total = build_from_cache(zone, meta["specs"], zone["encounters"], args.region)
-    except Exception:
-        return False
-    log(f"Page saved with {loaded} of {total} players loaded.")
-    return True
-
-
 def run(args):
     if args.compact:
         compact_cache(args.region)
@@ -920,80 +887,48 @@ def run(args):
         build_from_cache(zone, specs, zone["encounters"], args.region)
 
     opened = False
-    attempt = 0
-    while True:
-        try:
-            # Rankings for every chosen boss first, so the page lists all specs straight away
-            ranks_by_boss = {}
-            rstats = {"checked": 0, "new": 0, "specs_changed": 0}
-            ttl = args.rank_age * 3600 if args.rank_age is not None else RANKINGS_TTL
-            for b in bosses:
-                log(f"{b['name']}: checking top 10 per spec...")
-                ranks_by_boss[b["id"]] = get_rankings(api, b["id"], specs, args.region,
-                                                      args.refresh, ttl, rstats)
-            if rstats["checked"]:
-                log(f"\nChecked {rstats['checked']} spec rankings: "
-                    f"{rstats['new']} new entries across {rstats['specs_changed']} specs.")
-            rebuild()
-            if not opened:
-                open_page()
-                opened = True
-                log("\nThe page is built and fills in as logs are read. "
-                    "Refresh your browser to see new data.")
+    try:
+        # Rankings for every chosen boss first, so the page lists all specs straight away
+        ranks_by_boss = {}
+        rstats = {"checked": 0, "new": 0, "specs_changed": 0}
+        ttl = args.rank_age * 3600 if args.rank_age is not None else RANKINGS_TTL
+        for b in bosses:
+            log(f"{b['name']}: checking top 10 per spec...")
+            ranks_by_boss[b["id"]] = get_rankings(api, b["id"], specs, args.region,
+                                                  args.refresh, ttl, rstats)
+        if rstats["checked"]:
+            log(f"\nChecked {rstats['checked']} spec rankings: "
+                f"{rstats['new']} new entries across {rstats['specs_changed']} specs.")
+        rebuild()
+        open_page()
+        opened = True
+        log(f"\nThe page is open and fills in as logs are read. Refresh your browser to see new data.")
 
-            # Then logs, highest-ranked players first across all bosses and specs
-            best = {}
-            names = {}
-            for ranks in ranks_by_boss.values():
-                for lst in ranks.values():
-                    for i, r in enumerate(lst):
-                        rep = r.get("report") or {}
-                        if rep.get("code") and rep.get("fightID") is not None:
-                            k = (rep["code"], int(rep["fightID"]))
-                            best[k] = min(best.get(k, 99), i)
-                            names.setdefault(k, set()).add(r.get("name", ""))
-            fights = sorted(best, key=lambda k: best[k])
-            process_fights(api, fights, names, on_batch=rebuild)
-            if args.prune:
-                prune_cache(zone, specs, args.region)
-            loaded, total = build_from_cache(zone, specs, zone["encounters"], args.region, api)
-            log(f"\nDone: {loaded} of {total} players loaded ({api.calls} API requests).")
-            log("Refresh the page in your browser to see everything.")
-            return
-
-        except (KeyboardInterrupt, TimeUp) as e:
-            loaded, total = build_from_cache(zone, specs, zone["encounters"], args.region)
-            why = "Stopped." if isinstance(e, KeyboardInterrupt) else (
-                "Used up this hour's API allowance." if STOP_AT_LIMIT else "Out of time for this run.")
-            log(f"\n{why} Page saved with {loaded} of {total} players loaded.")
-            log("Run the script again later to carry on from here.")
-            if not opened:
-                open_page()
-            return
-
-        except ApiDown as e:
-            loaded, total = build_from_cache(zone, specs, zone["encounters"], args.region)
-            if not opened:
-                open_page()
-                opened = True
-            log(f"\nWarcraft Logs isn't usable right now: {e}")
-            log(f"Page saved with {loaded} of {total} players loaded.")
-            attempt += 1
-            wait = min(1800, 120 * 2 ** (attempt - 1))
-            left = time_left()
-            if left is not None and wait + 120 > left:
-                log("No time left in this run to wait for it. Saving and stopping.")
-                return
-            if left is None and attempt > RETRY_TRIES:
-                log(f"Gave up after {RETRY_TRIES} tries. Run the script again later.")
-                return
-            log(f"Waiting {wait // 60} min, then trying again (try {attempt}).")
-            try:
-                time.sleep(wait)
-            except KeyboardInterrupt:
-                log("\nStopped.")
-                return
-            log("Trying Warcraft Logs again...")
+        # Then logs, highest-ranked players first across all bosses and specs
+        best = {}
+        names = {}
+        for ranks in ranks_by_boss.values():
+            for lst in ranks.values():
+                for i, r in enumerate(lst):
+                    rep = r.get("report") or {}
+                    if rep.get("code") and rep.get("fightID") is not None:
+                        k = (rep["code"], int(rep["fightID"]))
+                        best[k] = min(best.get(k, 99), i)
+                        names.setdefault(k, set()).add(r.get("name", ""))
+        fights = sorted(best, key=lambda k: best[k])
+        process_fights(api, fights, names, on_batch=rebuild)
+        if args.prune:
+            prune_cache(zone, specs, args.region)
+        loaded, total = build_from_cache(zone, specs, zone["encounters"], args.region, api)
+        log(f"\nDone: {loaded} of {total} players loaded ({api.calls} API requests).")
+        log("Refresh the page in your browser to see everything.")
+    except (KeyboardInterrupt, TimeUp) as e:
+        loaded, total = build_from_cache(zone, specs, zone["encounters"], args.region)
+        why = "Out of time for this run." if isinstance(e, TimeUp) else "Stopped."
+        log(f"\n{why} Page saved with {loaded} of {total} players loaded.")
+        log("Run the script again later to carry on from here.")
+        if not opened:
+            open_page()
 
 
 # --------------------------------------------------------------------------- #
@@ -1745,8 +1680,6 @@ def main():
                     help="reuse saved rankings younger than this (default 12)")
     ap.add_argument("--max-new", type=int, metavar="N",
                     help="read at most N new logs this run")
-    ap.add_argument("--stop-at-limit", action="store_true",
-                    help="stop and save when the hourly API limit is hit, instead of waiting")
     ap.add_argument("--compact", action="store_true",
                     help="shrink the saved cache folder and drop logs that are no longer needed")
     ap.add_argument("--limit", action="store_true",
@@ -1754,7 +1687,7 @@ def main():
     ap.add_argument("--prune", action="store_true",
                     help="after updating, delete saved logs that dropped out of the top 10")
     args = ap.parse_args()
-    global OUT_FILE, DEADLINE, OPEN_BROWSER, MAX_NEW, STOP_AT_LIMIT
+    global OUT_FILE, DEADLINE, OPEN_BROWSER, MAX_NEW
     if args.out:
         OUT_FILE = os.path.abspath(args.out)
         os.makedirs(os.path.dirname(OUT_FILE) or ".", exist_ok=True)
@@ -1764,8 +1697,6 @@ def main():
         OPEN_BROWSER = False
     if args.max_new:
         MAX_NEW = args.max_new
-    if args.stop_at_limit:
-        STOP_AT_LIMIT = True
     try:
         if args.demo:
             demo(args)
@@ -1775,11 +1706,6 @@ def main():
         log("\nStopped.")
     except TimeUp:
         log("\nOut of time for this run.")
-    except ApiDown as e:
-        log(f"\nWarcraft Logs isn't usable right now: {e}")
-        if rebuild_offline(args):
-            log("The page was rebuilt from saved data, so it still shows everything downloaded so far.")
-        log("Nothing was lost; run the script again later.")
     except Exception as e:
         log(f"\nSomething went wrong: {e}")
         log("If it mentions a field or argument, the Warcraft Logs API may have changed. "
