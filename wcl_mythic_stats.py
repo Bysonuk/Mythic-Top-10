@@ -16,6 +16,8 @@ How to run
     python wcl_mythic_stats.py --all        # every boss, no menu
     python wcl_mythic_stats.py --refresh    # ignore cached rankings and fetch fresh ones
     python wcl_mythic_stats.py --offline    # just rebuild the page from what's already downloaded
+    python wcl_mythic_stats.py --limit      # show how much of the hourly API allowance is left
+    python wcl_mythic_stats.py --compact    # shrink the saved cache folder
     python wcl_mythic_stats.py --list-zones # show raid zone IDs
     python wcl_mythic_stats.py --zone 44    # use a specific raid zone
     python wcl_mythic_stats.py --region EU  # only EU players (US, EU, KR, TW, CN)
@@ -55,10 +57,15 @@ from datetime import datetime, timezone
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEADLINE = None   # unix time to stop by, set with --deadline
 MAX_NEW = 0       # cap on logs read per run, set with --max-new
+RETRY_TRIES = 6   # how many times to wait and retry when the API is unavailable
 
 
 class TimeUp(Exception):
     """Raised when the run has used its allotted time (see --deadline)."""
+
+
+class ApiDown(Exception):
+    """Raised when Warcraft Logs can't be used right now (key rejected, site down)."""
 
 CRED_FILE = os.path.join(HERE, "wcl_credentials.json")
 CACHE_DIR = os.path.join(HERE, "wcl_cache")
@@ -194,11 +201,12 @@ class WCL:
             with urllib.request.urlopen(req, timeout=30) as r:
                 self.token = json.load(r)["access_token"]
         except urllib.error.HTTPError as e:
-            if e.code in (400, 401):
-                log("\nWarcraft Logs rejected the Client ID or Secret.")
-                log(f"Check them, or delete {CRED_FILE} and run again to re-enter them.")
-                sys.exit(1)
-            raise
+            if e.code in (400, 401, 403):
+                raise ApiDown("Warcraft Logs rejected the Client ID or Secret. "
+                              f"Check them, or delete {CRED_FILE} and run again to re-enter them.")
+            raise ApiDown(f"Warcraft Logs returned an error while signing in ({e.code}).")
+        except urllib.error.URLError as e:
+            raise ApiDown(f"Couldn't reach Warcraft Logs ({e}).")
 
     def query(self, q, variables=None, allow_errors=False, with_errors=False):
         if not self.token:
@@ -220,20 +228,23 @@ class WCL:
                 self.calls += 1
             except urllib.error.HTTPError as e:
                 if e.code == 401:
+                    self.token = None
                     self.auth()
                     continue
+                if e.code == 403:
+                    raise ApiDown("Warcraft Logs refused this key (403). It may have been cancelled.")
                 if e.code == 429:
                     self.wait_for_reset(force=True)
                     continue
                 if e.code >= 500 and attempt < 5:
                     time.sleep(5 * (attempt + 1))
                     continue
-                raise
-            except urllib.error.URLError:
+                raise ApiDown(f"Warcraft Logs returned an error ({e.code}).")
+            except urllib.error.URLError as e:
                 if attempt < 5:
                     time.sleep(5 * (attempt + 1))
                     continue
-                raise
+                raise ApiDown(f"Couldn't reach Warcraft Logs ({e}).")
             if res.get("errors") and not allow_errors:
                 msgs = "; ".join(e.get("message", "?") for e in res["errors"])
                 if "rate limit" in msgs.lower():
@@ -243,7 +254,7 @@ class WCL:
             if with_errors:
                 return res.get("data") or {}, res.get("errors") or []
             return res.get("data") or {}
-        raise RuntimeError("Warcraft Logs API kept failing, try again later.")
+        raise ApiDown("Warcraft Logs kept failing, so it's probably having trouble right now.")
 
     def wait_for_reset(self, force=False):
         try:
@@ -385,6 +396,8 @@ def fetch_stats(api, chunk):
     api.wait_for_reset()
     try:
         d = api.query(q, allow_errors=True)
+    except ApiDown:
+        raise
     except Exception as e:
         log(f"    Skipped {len(chunk)} logs ({e})")
         return
@@ -410,6 +423,8 @@ def fetch_talents(api, wanted):
     api.wait_for_reset()
     try:
         d, errors = api.query(q, allow_errors=True, with_errors=True)
+    except ApiDown:
+        raise
     except Exception as e:
         log(f"    Skipped talents for {len(wanted)} logs ({e})")
         return
@@ -695,6 +710,69 @@ def pick_zone(zones, zone_id):
     return live[-1] if live else None
 
 
+def dir_size(path):
+    total = 0
+    for root, _, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+    return total
+
+
+def compact_cache(region=None):
+    """Rewrite every saved log in the small format, and drop ones no longer in a top 10."""
+    fights_dir = os.path.join(CACHE_DIR, "fights")
+    if not os.path.isdir(fights_dir):
+        log("No saved logs found.")
+        return
+    before = dir_size(CACHE_DIR)
+    files = sorted(os.listdir(fights_dir))
+    done = shrunk = 0
+    for fn in files:
+        p = os.path.join(fights_dir, fn)
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                c = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if isinstance(c, dict) and c.get("v") != 2:
+            c = compact_fight(c.get("players"), c.get("events"))
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(c, f)
+            shrunk += 1
+        done += 1
+        if done % 200 == 0:
+            log(f"  {done}/{len(files)} logs checked...")
+
+    # Drop logs nobody in the current top 10 uses any more
+    meta = cache_get("meta", "zones+specs")
+    removed = 0
+    if meta:
+        keep = set()
+        for z in meta["zones"]:
+            for b in z.get("encounters") or []:
+                for sp in meta["specs"]:
+                    for r in cache_get("rankings", rank_key(b["id"], sp, region)) or []:
+                        rp = r.get("report") or {}
+                        if rp.get("code") and rp.get("fightID") is not None:
+                            keep.add(hashlib.sha1(f"{rp['code']}|{int(rp['fightID'])}".encode()).hexdigest()[:20] + ".json")
+        if keep:
+            for kind in ("fights", "talents"):
+                d = os.path.join(CACHE_DIR, kind)
+                for fn in os.listdir(d) if os.path.isdir(d) else []:
+                    if fn not in keep:
+                        try:
+                            os.remove(os.path.join(d, fn))
+                            removed += 1
+                        except OSError:
+                            pass
+    after = dir_size(CACHE_DIR)
+    log(f"\nRewrote {shrunk} logs in the small format and removed {removed} unused ones.")
+    log(f"Cache is now {after/1e6:.1f} MB (was {before/1e6:.1f} MB).")
+
+
 def prune_cache(zone, specs, region):
     """Delete saved logs that no longer appear in anyone's top 10."""
     keep = set()
@@ -769,7 +847,38 @@ def build_from_cache(zone, specs, bosses, region, api=None):
     return loaded, total
 
 
+def rebuild_offline(args):
+    """Build the page from saved data alone. Used when the API can't be reached."""
+    meta = cache_get("meta", "zones+specs")
+    if not meta:
+        return False
+    zone = pick_zone(meta["zones"], args.zone)
+    if not zone:
+        return False
+    try:
+        loaded, total = build_from_cache(zone, meta["specs"], zone["encounters"], args.region)
+    except Exception:
+        return False
+    log(f"Page saved with {loaded} of {total} players loaded.")
+    return True
+
+
 def run(args):
+    if args.compact:
+        compact_cache(args.region)
+        return
+
+    if args.limit:
+        cid, secret = load_credentials()
+        api = WCL(cid, secret)
+        api.auth()
+        rl = api.query("{ rateLimitData { limitPerHour pointsSpentThisHour pointsResetIn } }")["rateLimitData"]
+        left = rl["limitPerHour"] - rl["pointsSpentThisHour"]
+        mins = int(rl["pointsResetIn"]) // 60
+        log(f"Client ID {cid[:8]}...: {rl['pointsSpentThisHour']:.0f} of {rl['limitPerHour']} points used "
+            f"this hour, {left:.0f} left, resets in {mins} min.")
+        return
+
     if args.offline:
         meta = cache_get("meta", "zones+specs")
         if meta is None:
@@ -807,48 +916,79 @@ def run(args):
         build_from_cache(zone, specs, zone["encounters"], args.region)
 
     opened = False
-    try:
-        # Rankings for every chosen boss first, so the page lists all specs straight away
-        ranks_by_boss = {}
-        rstats = {"checked": 0, "new": 0, "specs_changed": 0}
-        ttl = args.rank_age * 3600 if args.rank_age is not None else RANKINGS_TTL
-        for b in bosses:
-            log(f"{b['name']}: checking top 10 per spec...")
-            ranks_by_boss[b["id"]] = get_rankings(api, b["id"], specs, args.region,
-                                                  args.refresh, ttl, rstats)
-        if rstats["checked"]:
-            log(f"\nChecked {rstats['checked']} spec rankings: "
-                f"{rstats['new']} new entries across {rstats['specs_changed']} specs.")
-        rebuild()
-        open_page()
-        opened = True
-        log(f"\nThe page is open and fills in as logs are read. Refresh your browser to see new data.")
+    attempt = 0
+    while True:
+        try:
+            # Rankings for every chosen boss first, so the page lists all specs straight away
+            ranks_by_boss = {}
+            rstats = {"checked": 0, "new": 0, "specs_changed": 0}
+            ttl = args.rank_age * 3600 if args.rank_age is not None else RANKINGS_TTL
+            for b in bosses:
+                log(f"{b['name']}: checking top 10 per spec...")
+                ranks_by_boss[b["id"]] = get_rankings(api, b["id"], specs, args.region,
+                                                      args.refresh, ttl, rstats)
+            if rstats["checked"]:
+                log(f"\nChecked {rstats['checked']} spec rankings: "
+                    f"{rstats['new']} new entries across {rstats['specs_changed']} specs.")
+            rebuild()
+            if not opened:
+                open_page()
+                opened = True
+                log("\nThe page is built and fills in as logs are read. "
+                    "Refresh your browser to see new data.")
 
-        # Then logs, highest-ranked players first across all bosses and specs
-        best = {}
-        names = {}
-        for ranks in ranks_by_boss.values():
-            for lst in ranks.values():
-                for i, r in enumerate(lst):
-                    rep = r.get("report") or {}
-                    if rep.get("code") and rep.get("fightID") is not None:
-                        k = (rep["code"], int(rep["fightID"]))
-                        best[k] = min(best.get(k, 99), i)
-                        names.setdefault(k, set()).add(r.get("name", ""))
-        fights = sorted(best, key=lambda k: best[k])
-        process_fights(api, fights, names, on_batch=rebuild)
-        if args.prune:
-            prune_cache(zone, specs, args.region)
-        loaded, total = build_from_cache(zone, specs, zone["encounters"], args.region, api)
-        log(f"\nDone: {loaded} of {total} players loaded ({api.calls} API requests).")
-        log("Refresh the page in your browser to see everything.")
-    except (KeyboardInterrupt, TimeUp) as e:
-        loaded, total = build_from_cache(zone, specs, zone["encounters"], args.region)
-        why = "Out of time for this run." if isinstance(e, TimeUp) else "Stopped."
-        log(f"\n{why} Page saved with {loaded} of {total} players loaded.")
-        log("Run the script again later to carry on from here.")
-        if not opened:
-            open_page()
+            # Then logs, highest-ranked players first across all bosses and specs
+            best = {}
+            names = {}
+            for ranks in ranks_by_boss.values():
+                for lst in ranks.values():
+                    for i, r in enumerate(lst):
+                        rep = r.get("report") or {}
+                        if rep.get("code") and rep.get("fightID") is not None:
+                            k = (rep["code"], int(rep["fightID"]))
+                            best[k] = min(best.get(k, 99), i)
+                            names.setdefault(k, set()).add(r.get("name", ""))
+            fights = sorted(best, key=lambda k: best[k])
+            process_fights(api, fights, names, on_batch=rebuild)
+            if args.prune:
+                prune_cache(zone, specs, args.region)
+            loaded, total = build_from_cache(zone, specs, zone["encounters"], args.region, api)
+            log(f"\nDone: {loaded} of {total} players loaded ({api.calls} API requests).")
+            log("Refresh the page in your browser to see everything.")
+            return
+
+        except (KeyboardInterrupt, TimeUp) as e:
+            loaded, total = build_from_cache(zone, specs, zone["encounters"], args.region)
+            why = "Out of time for this run." if isinstance(e, TimeUp) else "Stopped."
+            log(f"\n{why} Page saved with {loaded} of {total} players loaded.")
+            log("Run the script again later to carry on from here.")
+            if not opened:
+                open_page()
+            return
+
+        except ApiDown as e:
+            loaded, total = build_from_cache(zone, specs, zone["encounters"], args.region)
+            if not opened:
+                open_page()
+                opened = True
+            log(f"\nWarcraft Logs isn't usable right now: {e}")
+            log(f"Page saved with {loaded} of {total} players loaded.")
+            attempt += 1
+            wait = min(1800, 120 * 2 ** (attempt - 1))
+            left = time_left()
+            if left is not None and wait + 120 > left:
+                log("No time left in this run to wait for it. Saving and stopping.")
+                return
+            if left is None and attempt > RETRY_TRIES:
+                log(f"Gave up after {RETRY_TRIES} tries. Run the script again later.")
+                return
+            log(f"Waiting {wait // 60} min, then trying again (try {attempt}).")
+            try:
+                time.sleep(wait)
+            except KeyboardInterrupt:
+                log("\nStopped.")
+                return
+            log("Trying Warcraft Logs again...")
 
 
 # --------------------------------------------------------------------------- #
@@ -996,8 +1136,12 @@ button,select,input{font:inherit;color:inherit}
 .top{display:flex;align-items:flex-end;gap:var(--gap);padding:.9rem var(--gap) 0;border-bottom:1px solid var(--line);min-width:0}
 .raid{flex:0 0 auto;padding-bottom:.7rem;min-width:0}
 .raid h1{margin:0;font-family:var(--display);font-weight:700;font-size:clamp(1.6rem, 2.2vw, 2.6rem);line-height:.95;white-space:nowrap}
-.raid p{margin:.2rem 0 0;color:var(--dim);font-size:.8rem}
+.raid p{margin:.2rem 0 0;color:var(--dim);font-size:.8rem;display:flex;flex-wrap:wrap;align-items:center;gap:.3rem .6rem}
 .raid .warn{color:var(--haste)}
+.stamp{display:inline-flex;align-items:center;gap:.4rem;background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:.1rem .6rem;color:var(--ink)}
+.stamp i{width:.5rem;height:.5rem;border-radius:50%;background:var(--vers);flex:0 0 auto}
+.stamp.old i{background:var(--haste)}
+.stamp.stale i{background:var(--crit)}
 .bosses{display:flex;gap:.2rem;overflow-x:auto;min-width:0;flex:1;scrollbar-width:none;align-self:flex-end}
 .bosses::-webkit-scrollbar{display:none}
 .bosses button{flex:0 0 auto;background:none;border:0;border-bottom:3px solid transparent;padding:.5rem .8rem .6rem;cursor:pointer;color:var(--dim);font-family:var(--display);font-weight:500;font-size:1.15rem;white-space:nowrap}
@@ -1221,6 +1365,13 @@ const pct = v => (v*100).toFixed(0) + "%";
 function fmtAmt(v){ if(!v) return "–"; if(v>=1e6) return (v/1e6).toFixed(2)+"M"; if(v>=1e3) return (v/1e3).toFixed(1)+"K"; return Math.round(v)+""; }
 function fmtInt(v){ return v ? Math.round(v).toLocaleString() : "–"; }
 function fmtDur(ms){ if(!ms) return "–"; const s=Math.round(ms/1000); return Math.floor(s/60)+":"+String(s%60).padStart(2,"0"); }
+function ago(ms){
+  const s = (Date.now()-ms)/1000;
+  if(s < 90) return "just now";
+  if(s < 5400) return Math.round(s/60) + " min ago";
+  if(s < 36*3600) return Math.round(s/3600) + " hours ago";
+  return Math.round(s/86400) + " days ago";
+}
 function fmtDate(ms){ if(!ms) return "–"; return new Date(ms).toLocaleDateString(undefined,{day:"numeric",month:"short"}); }
 function hexA(hex, a){ const n=parseInt(hex.slice(1),16); return `rgba(${n>>16},${(n>>8)&255},${n&255},${a})`; }
 
@@ -1529,9 +1680,13 @@ function init(){
   const gen = new Date(DATA.generated);
   const pr = DATA.progress;
   const partial = pr && pr.total && pr.loaded < pr.total;
-  $("#sub").innerHTML = `Mythic, top 10 per spec, ${esc(DATA.region)}. Updated ${esc(gen.toLocaleString(undefined,{dateStyle:"medium",timeStyle:"short"}))}.`
-    + (partial ? ` <span class="warn">${pr.loaded} of ${pr.total} players loaded.</span>` : "")
-    + (pr && pr.total && pr.talents !== undefined && pr.talents < pr.total ? ` <span class="warn">Talents for ${pr.talents} of ${pr.total}.</span>` : "");
+  const age = Date.now() - gen.getTime();
+  const cls = age > 3*86400e3 ? "stale" : age > 36*3600e3 ? "old" : "";
+  $("#sub").innerHTML = `<span class="stamp ${cls}"><i></i>Updated ${esc(ago(gen.getTime()))}</span>`
+    + `<span>${esc(gen.toLocaleString(undefined,{dateStyle:"medium",timeStyle:"short"}))}</span>`
+    + `<span>Mythic, top 10 per spec, ${esc(DATA.region)}</span>`
+    + (partial ? `<span class="warn">${pr.loaded} of ${pr.total} players loaded</span>` : "")
+    + (pr && pr.total && pr.talents !== undefined && pr.talents < pr.total ? `<span class="warn">talents for ${pr.talents}</span>` : "");
 
   const tabs = DATA.bosses.map((b,i)=>[i,b.name]);
   if(DATA.bosses.length > 1) tabs.push(["all","All bosses"]);
@@ -1585,6 +1740,10 @@ def main():
                     help="reuse saved rankings younger than this (default 12)")
     ap.add_argument("--max-new", type=int, metavar="N",
                     help="read at most N new logs this run")
+    ap.add_argument("--compact", action="store_true",
+                    help="shrink the saved cache folder and drop logs that are no longer needed")
+    ap.add_argument("--limit", action="store_true",
+                    help="show how many API points this key has used this hour, then exit")
     ap.add_argument("--prune", action="store_true",
                     help="after updating, delete saved logs that dropped out of the top 10")
     args = ap.parse_args()
@@ -1607,6 +1766,11 @@ def main():
         log("\nStopped.")
     except TimeUp:
         log("\nOut of time for this run.")
+    except ApiDown as e:
+        log(f"\nWarcraft Logs isn't usable right now: {e}")
+        if rebuild_offline(args):
+            log("The page was rebuilt from saved data, so it still shows everything downloaded so far.")
+        log("Nothing was lost; run the script again later.")
     except Exception as e:
         log(f"\nSomething went wrong: {e}")
         log("If it mentions a field or argument, the Warcraft Logs API may have changed. "
