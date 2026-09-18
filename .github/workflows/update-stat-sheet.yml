@@ -61,6 +61,17 @@ jobs:
             --addon build/MythicStats \
             --interface 120100,120105
 
+      - name: Zip the in-game addon for download
+        run: |
+          if [ -d build/MythicStats ]; then
+            (cd build && zip -qr ../site/MythicStats.zip MythicStats)
+            ls -lh site/MythicStats.zip
+          fi
+
+      - name: Publish the desktop updater
+        run: |
+          if [ -f Update-MythicStats.bat ]; then cp Update-MythicStats.bat site/; fi
+
       - name: Save the updated cache and page
         run: |
           git config user.name "github-actions[bot]"
@@ -89,16 +100,24 @@ jobs:
           echo "Could not save after 5 tries."
           exit 1
 
-      - name: Zip the in-game addon for download
+      - name: Publish a GitHub release (this is what WowUp reads)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ -d build/MythicStats ]; then
-            (cd build && zip -qr ../site/MythicStats.zip MythicStats)
-            ls -lh site/MythicStats.zip
+          if [ ! -f site/MythicStats.zip ]; then
+            echo "No addon zip to release."
+            exit 0
           fi
-
-      - name: Publish the desktop updater
-        run: |
-          if [ -f Update-MythicStats.bat ]; then cp Update-MythicStats.bat site/; fi
+          tag="v$(date -u +%Y.%m.%d)"
+          notes="Rankings refreshed on $(date -u +%Y-%m-%d). Top 10 Mythic logs per spec, with stats, trinkets, potions and talent codes."
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" site/MythicStats.zip --clobber
+            echo "Updated release $tag."
+          else
+            gh release create "$tag" site/MythicStats.zip \
+              --title "Mythic Stat Sheet $tag" --notes "$notes" --latest
+            echo "Created release $tag."
+          fi
 
       - name: Upload the addon to CurseForge (once a day, if it changed)
         env:
