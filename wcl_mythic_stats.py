@@ -1477,6 +1477,7 @@ local CLASS_ORDER = {
 }
 local QUESTION = "Interface\\Icons\\INV_Misc_QuestionMark"
 local ROW_H, SIDE_W, SIDE_ROW = 62, 210, 32
+local SIDE_PAD = 30            -- room for the scroll bar down the right of the list
 
 local state = { key = nil, boss = 1 }
 local specs, byKey, iconFor, classFileFor = {}, {}, {}, {}
@@ -1493,7 +1494,8 @@ end
 
 local function colorCode(slug)
   local c = classColor(slug)
-  return string.format("|cff%02x%02x%02x", c.r * 255, c.g * 255, c.b * 255)
+  return string.format("|cff%02x%02x%02x",
+    math.floor(c.r * 255 + 0.5), math.floor(c.g * 255 + 0.5), math.floor(c.b * 255 + 0.5))
 end
 
 -- Spec icons and class file names come from the game, matched up by name
@@ -1770,7 +1772,7 @@ end
 local function buildSide(parent)
   for i, e in ipairs(specs) do
     local b = CreateFrame("Button", nil, parent)
-    b:SetSize(SIDE_W - 22, SIDE_ROW)
+    b:SetSize(SIDE_W - SIDE_PAD, SIDE_ROW)
     b:SetPoint("TOPLEFT", 0, -(i - 1) * SIDE_ROW)
     b.key = e.key
 
@@ -1816,7 +1818,7 @@ local function buildBossButtons()
       b = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
       b:SetSize(136, 20)
       local col, line = (i - 1) % PER_LINE, math.floor((i - 1) / PER_LINE)
-      b:SetPoint("TOPLEFT", SIDE_W + 16 + col * 140, BOSS_TOP - line * BOSS_H)
+      b:SetPoint("TOPLEFT", SIDE_W + 26 + col * 140, BOSS_TOP - line * BOSS_H)
       bossButtons[i] = b
     end
     b:SetText(n)
@@ -1837,16 +1839,18 @@ local function createMain()
   main = f
 
   f.sub = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  f.sub:SetPoint("TOPLEFT", SIDE_W + 16, -34)
+  f.sub:SetPoint("TOPLEFT", SIDE_W + 26, -34)
   f.sub:SetJustifyH("LEFT")
 
   -- Scrolling list of every spec
   local scroll = CreateFrame("ScrollFrame", "MythicStatsSideScroll", f, "UIPanelScrollFrameTemplate")
   scroll:SetPoint("TOPLEFT", 12, -34)
   local child = CreateFrame("Frame", nil, scroll)
-  child:SetSize(SIDE_W - 22, math.max(1, #specs * SIDE_ROW))
+  child:SetSize(SIDE_W - SIDE_PAD, math.max(1, #specs * SIDE_ROW))
   scroll:SetScrollChild(child)
   buildSide(child)
+  child:SetHeight(math.max(1, #specs * SIDE_ROW))
+  if scroll.UpdateScrollChildRect then scroll:UpdateScrollChildRect() end
 
   buildBossButtons()
 
@@ -1857,11 +1861,11 @@ local function createMain()
   local top = BOSS_TOP - bossLines() * BOSS_H - 10
   local height = math.abs(top) + 10 * (ROW_H + 3) + 22
   f:SetSize(1000, height)
-  scroll:SetSize(SIDE_W - 6, height - 46)
+  scroll:SetSize(SIDE_W - SIDE_PAD, height - 46)
   for i = 1, 10 do
     local row = CreateFrame("Frame", nil, f)
     row:SetSize(750, ROW_H)
-    row:SetPoint("TOPLEFT", SIDE_W + 16, top - (i - 1) * (ROW_H + 3))
+    row:SetPoint("TOPLEFT", SIDE_W + 26, top - (i - 1) * (ROW_H + 3))
 
     row.bg = row:CreateTexture(nil, "BACKGROUND")
     row.bg:SetAllPoints()
@@ -1902,12 +1906,24 @@ end
 -- Open, close, and following your spec
 ----------------------------------------------------------------------
 local function scrollToSelected()
+  local scroll = MythicStatsSideScroll
+  if not scroll then return end
+  local index
   for i, b in ipairs(sideButtons) do
-    if b.key == state.key and MythicStatsSideScroll then
-      MythicStatsSideScroll:SetVerticalScroll(math.max(0, (i - 4) * SIDE_ROW))
-      return
-    end
+    if b.key == state.key then index = i break end
   end
+  if not index then return end
+  -- The scroll frame doesn't know its own range until it has been drawn once,
+  -- so work it out first, then scroll on the next frame and clamp to the range.
+  local function go()
+    if scroll.UpdateScrollChildRect then scroll:UpdateScrollChildRect() end
+    local want = math.max(0, (index - 4) * SIDE_ROW)
+    local range = scroll:GetVerticalScrollRange() or 0
+    if range > 0 and want > range then want = range end
+    scroll:SetVerticalScroll(want)
+  end
+  go()
+  if C_Timer and C_Timer.After then C_Timer.After(0, go) end
 end
 
 local function toggle()
