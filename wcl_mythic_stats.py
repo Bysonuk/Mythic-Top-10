@@ -458,24 +458,80 @@ def fetch_talents(api, wanted):
             log("    Warcraft Logs didn't accept the talent request, so talents are skipped this run.")
 
 
-POTION_FILTERS = [
-    'ability.name CONTAINS "Potion"',
-    'ability.name LIKE "%Potion%"',
-    'ability.name contains "potion"',
-]
+# Potions show up as auras, and their buff names rarely say "potion"
+# (Light's Potential, for instance), so they're matched by spell ID.
+POTION_SEED_IDS = [1236616]          # Light's Potential
+POTION_ICON_WORDS = ("potion", "alchemy")
+POTION_NAME_WORDS = ("potion", "elixir", "draught", "tonic")
+NOT_POTION_WORDS = ("flask", "phial", "food", "feast", "well fed", "rune", "oil",
+                    "sharpening", "weightstone", "healthstone", "bandage")
+POTION_IDS_TTL = 7 * 24 * 3600
 
 
-def fetch_potions(api, wanted):
-    """wanted: {(code, fid): [actorID, ...]}. Saves the combat potion each player cast."""
-    if not api.potions_ok:
+def classify_potions(api, auras):
+    """auras: {id: name}. Returns the IDs that look like potion buffs."""
+    ids = sorted(auras)
+    icons = {}
+    for i in range(0, len(ids), 40):
+        chunk = ids[i:i + 40]
+        q = "{ gameData { " + " ".join(f"a{n}: ability(id: {a}) {{ id name icon }}"
+                                       for n, a in enumerate(chunk)) + " } }"
+        try:
+            d, errors = api.query(q, allow_errors=True, with_errors=True)
+        except Exception:
+            break
+        gd = (d or {}).get("gameData") or {}
+        for n, a in enumerate(chunk):
+            ab = gd.get(f"a{n}") or {}
+            icons[a] = str(ab.get("icon") or "").lower()
+            if ab.get("name"):
+                auras[a] = ab["name"]
+    out = []
+    for a, name in auras.items():
+        low = str(name or "").lower()
+        if any(w in low for w in NOT_POTION_WORDS):
+            continue
+        if any(w in low for w in POTION_NAME_WORDS) or \
+           any(w in icons.get(a, "") for w in POTION_ICON_WORDS):
+            out.append(a)
+    return out
+
+
+def potion_ids(api, sample_fights):
+    """Work out which auras are potions, from a few logs, and remember the answer."""
+    cached = cache_get("potions", "ids", POTION_IDS_TTL)
+    if cached:
+        return cached
+    auras = {}
+    for code, fid in list(sample_fights)[:3]:
+        q = ('{ reportData { report(code: "%s") { table(fightIDs: [%d], dataType: Buffs) } } }'
+             % (code, int(fid)))
+        try:
+            d, errors = api.query(q, allow_errors=True, with_errors=True)
+        except Exception:
+            break
+        tbl = unwrap((((d or {}).get("reportData") or {}).get("report") or {}).get("table") or {}, "data")
+        for a in (tbl.get("auras") if isinstance(tbl, dict) else None) or []:
+            if a.get("guid"):
+                auras[int(a["guid"])] = a.get("name") or ""
+    ids = sorted(set(classify_potions(api, auras)) | set(POTION_SEED_IDS)) if auras else list(POTION_SEED_IDS)
+    cache_put("potions", "ids", ids)
+    log(f"  Potion auras to look for: {len(ids)}")
+    return ids
+
+
+def fetch_potions(api, wanted, ids):
+    """wanted: {(code, fid): [actorID, ...]}. Saves the potion buff each player had."""
+    if not api.potions_ok or not ids:
         return
+    id_list = ", ".join(str(int(i)) for i in ids)
     parts, index = [], []
-    for n, ((code, fid), ids) in enumerate(wanted.items()):
-        flt = POTION_FILTERS[api.potion_filter].replace('"', '\\"')
+    for n, ((code, fid), actor_ids) in enumerate(wanted.items()):
+        flt = f"ability.id in ({id_list})".replace('"', '')
         parts.append(f'p{n}: report(code: "{code}") {{ events(fightIDs: [{int(fid)}], '
-                     f'dataType: Casts, limit: 300, useAbilityIDs: false, '
+                     f'dataType: Buffs, limit: 400, useAbilityIDs: false, '
                      f'filterExpression: "{flt}") {{ data }} }}')
-        index.append(((code, fid), ids))
+        index.append(((code, fid), actor_ids))
     q = "{ reportData { " + " ".join(parts) + " } }"
     api.wait_for_reset()
     try:
@@ -487,33 +543,27 @@ def fetch_potions(api, wanted):
         return
     rd = (d or {}).get("reportData") or {}
     if not any(rd.get(f"p{n}") for n in range(len(index))) and errors:
-        # This filter isn't understood; try the next one, then give up on potions
-        api.potion_filter += 1
-        if api.potion_filter < len(POTION_FILTERS):
-            log("    Trying a different way of asking for potions...")
-            return fetch_potions(api, wanted)
         api.potions_ok = False
         msg = "; ".join(e.get("message", "?") for e in errors)[:160]
-        log(f"    Warcraft Logs wouldn't return potion casts, so they're skipped ({msg}).")
+        log(f"    Warcraft Logs wouldn't return potion auras, so they're skipped ({msg}).")
         return
-    for n, (key, ids) in enumerate(index):
+    for n, (key, actor_ids) in enumerate(index):
         rep = rd.get(f"p{n}")
         if rep is None:
             continue
         events = ((rep.get("events") or {}).get("data")) or []
-        have = cache_get("potions", f"{key[0]}|{key[1]}") or {}
-        for a in ids:
+        have = cache_get("potionsv2", f"{key[0]}|{key[1]}") or {}
+        for a in actor_ids:
             have.setdefault(str(a), "")
         for ev in events:
-            sid = ev.get("sourceID")
-            if sid is None or str(sid) not in have or have[str(sid)]:
+            who = ev.get("targetID", ev.get("sourceID"))
+            if who is None or str(who) not in have or have[str(who)]:
                 continue
             ability = ev.get("ability") if isinstance(ev.get("ability"), dict) else {}
-            name = ability.get("name")
             guid = ev.get("abilityGameID") or ability.get("guid")
-            if name or guid:
-                have[str(sid)] = {"name": name or "", "id": int(guid or 0)}
-        cache_put("potions", f"{key[0]}|{key[1]}", have)
+            if guid:
+                have[str(who)] = {"name": ability.get("name") or "", "id": int(guid)}
+        cache_put("potionsv2", f"{key[0]}|{key[1]}", have)
 
 
 def process_fights(api, fights, names_by_fight, on_batch=None):
@@ -526,7 +576,7 @@ def process_fights(api, fights, names_by_fight, on_batch=None):
         for kind, on in (("talents", api.talents_ok), ("potions", api.potions_ok)):
             if not on:
                 continue
-            have = cache_get(kind, f"{key[0]}|{key[1]}") or {}
+            have = cache_get("potionsv2" if kind == "potions" else kind, f"{key[0]}|{key[1]}") or {}
             for nm in names_by_fight.get(key, ()):
                 a = find_actor(fight, nm)
                 if a and a.get("id") is not None and str(a["id"]) not in have:
@@ -547,6 +597,7 @@ def process_fights(api, fights, names_by_fight, on_batch=None):
         new = [k for k in chunk if load_fight(k[0], k[1]) is None]
         if new:
             fetch_stats(api, new)
+        pot_ids = potion_ids(api, todo) if api.potions_ok else []
         for kind, fetch in (("talents", fetch_talents), ("potions", fetch_potions)):
             if kind == "talents" and not api.talents_ok:
                 continue
@@ -557,7 +608,7 @@ def process_fights(api, fights, names_by_fight, on_batch=None):
                 fight = load_fight(k[0], k[1])
                 if fight is None:
                     continue
-                have = cache_get(kind, f"{k[0]}|{k[1]}") or {}
+                have = cache_get("potionsv2" if kind == "potions" else kind, f"{k[0]}|{k[1]}") or {}
                 ids = []
                 for nm in names_by_fight.get(k, ()):
                     a = find_actor(fight, nm)
@@ -566,7 +617,10 @@ def process_fights(api, fights, names_by_fight, on_batch=None):
                 if ids:
                     wanted[k] = ids
             if wanted:
-                fetch(api, wanted)
+                if kind == "potions":
+                    fetch(api, wanted, pot_ids)
+                else:
+                    fetch(api, wanted)
         done += len(chunk)
         check_time()
         pts = f"  (API points used this hour: {api.points}/{api.limit})" if api.limit else ""
@@ -706,7 +760,7 @@ def build_player(rank_entry, idx, fight, item_names):
         tal = cache_get("talents", fkey) or {}
         if str(actor_id) in tal:
             p["talents"] = tal[str(actor_id)]  # "" means the log had no talent code
-        pot = cache_get("potions", fkey) or {}
+        pot = cache_get("potionsv2", fkey) or {}
         if str(actor_id) in pot:
             p["potion"] = pot[str(actor_id)]   # "" means no potion was cast in the fight
 
@@ -857,7 +911,7 @@ def compact_cache(region=None):
                         if rp.get("code") and rp.get("fightID") is not None:
                             keep.add(hashlib.sha1(f"{rp['code']}|{int(rp['fightID'])}".encode()).hexdigest()[:20] + ".json")
         if keep:
-            for kind in ("fights", "talents", "potions"):
+            for kind in ("fights", "talents", "potions", "potionsv2"):
                 d = os.path.join(CACHE_DIR, kind)
                 for fn in os.listdir(d) if os.path.isdir(d) else []:
                     if fn not in keep:
@@ -881,7 +935,7 @@ def prune_cache(zone, specs, region):
                 if rep.get("code") and rep.get("fightID") is not None:
                     keep.add(hashlib.sha1(f"{rep['code']}|{int(rep['fightID'])}".encode()).hexdigest()[:20] + ".json")
     removed = 0
-    for kind in ("fights", "talents", "potions"):
+    for kind in ("fights", "talents", "potions", "potionsv2"):
         d = os.path.join(CACHE_DIR, kind)
         for fn in os.listdir(d) if os.path.isdir(d) else []:
             if fn not in keep:
@@ -996,20 +1050,19 @@ def test_potions(api, args):
 def _run_potion_tests(api, code, fid, actor_id, who):
     log(f"Testing on log {code}, fight {fid}, player {who} (actor {actor_id}).\n")
 
-    tries = [(f'filterExpression: "{f}"'.replace('"', '\\"').replace('filterExpression: \\"', 'filterExpression: "', 1)[:-2] + '"',
-              f) for f in POTION_FILTERS]
-    for expr, label in tries:
-        q = ('{ reportData { report(code: "%s") { events(fightIDs: [%d], dataType: Casts, limit: 20, %s) '
-             '{ data } } } }') % (code, fid, expr)
-        d, errors = api.query(q, allow_errors=True, with_errors=True)
-        events = (((d or {}).get("reportData") or {}).get("report") or {}).get("events") or {}
-        data = events.get("data") or []
-        if errors:
-            log(f"  {label}  ->  rejected: " + "; ".join(e.get('message', '?') for e in errors)[:200])
-        else:
-            log(f"  {label}  ->  {len(data)} events")
-            for ev in data[:3]:
-                log(f"      {json.dumps(ev)[:200]}")
+    ids = potion_ids(api, [(code, fid)])
+    log(f"  Potion auras being matched: {ids}\n")
+    flt = "ability.id in (" + ", ".join(str(i) for i in ids) + ")"
+    q = ('{ reportData { report(code: "%s") { events(fightIDs: [%d], dataType: Buffs, limit: 50, '
+         'useAbilityIDs: false, filterExpression: "%s") { data } } } }') % (code, fid, flt)
+    d, errors = api.query(q, allow_errors=True, with_errors=True)
+    if errors:
+        log("  Buff lookup rejected: " + "; ".join(e.get('message', '?') for e in errors)[:200])
+    else:
+        data = ((((d or {}).get("reportData") or {}).get("report") or {}).get("events") or {}).get("data") or []
+        log(f"  Potion buff events found: {len(data)}")
+        for ev in data[:5]:
+            log(f"      {json.dumps(ev)[:220]}")
 
     log("\n  Buffs the player had (potions show up here as auras):")
     q = ('{ reportData { report(code: "%s") { table(fightIDs: [%d], dataType: Buffs, '
