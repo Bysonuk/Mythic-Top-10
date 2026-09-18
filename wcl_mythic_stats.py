@@ -18,6 +18,7 @@ How to run
     python wcl_mythic_stats.py --offline    # just rebuild the page from what's already downloaded
     python wcl_mythic_stats.py --limit      # show how much of the hourly API allowance is left
     python wcl_mythic_stats.py --compact    # shrink the saved cache folder
+    python wcl_mythic_stats.py --offline --addon   # also build the in-game addon folder
     python wcl_mythic_stats.py --list-zones # show raid zone IDs
     python wcl_mythic_stats.py --zone 44    # use a specific raid zone
     python wcl_mythic_stats.py --region EU  # only EU players (US, EU, KR, TW, CN)
@@ -57,10 +58,18 @@ from datetime import datetime, timezone
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEADLINE = None   # unix time to stop by, set with --deadline
 MAX_NEW = 0       # cap on logs read per run, set with --max-new
+STOP_AT_LIMIT = False  # stop instead of waiting for the hourly limit (--stop-at-limit)
+ADDON_DIR = None  # where to write the in-game addon, set with --addon
+INTERFACE = "120000"
+RETRY_TRIES = 6   # how many times to wait and retry when the API is unavailable
 
 
 class TimeUp(Exception):
     """Raised when the run has used its allotted time (see --deadline)."""
+
+
+class ApiDown(Exception):
+    """Raised when Warcraft Logs can't be used right now (key rejected, site down)."""
 
 CRED_FILE = os.path.join(HERE, "wcl_credentials.json")
 CACHE_DIR = os.path.join(HERE, "wcl_cache")
@@ -196,11 +205,12 @@ class WCL:
             with urllib.request.urlopen(req, timeout=30) as r:
                 self.token = json.load(r)["access_token"]
         except urllib.error.HTTPError as e:
-            if e.code in (400, 401):
-                log("\nWarcraft Logs rejected the Client ID or Secret.")
-                log(f"Check them, or delete {CRED_FILE} and run again to re-enter them.")
-                sys.exit(1)
-            raise
+            if e.code in (400, 401, 403):
+                raise ApiDown("Warcraft Logs rejected the Client ID or Secret. "
+                              f"Check them, or delete {CRED_FILE} and run again to re-enter them.")
+            raise ApiDown(f"Warcraft Logs returned an error while signing in ({e.code}).")
+        except urllib.error.URLError as e:
+            raise ApiDown(f"Couldn't reach Warcraft Logs ({e}).")
 
     def query(self, q, variables=None, allow_errors=False, with_errors=False):
         if not self.token:
@@ -222,20 +232,23 @@ class WCL:
                 self.calls += 1
             except urllib.error.HTTPError as e:
                 if e.code == 401:
+                    self.token = None
                     self.auth()
                     continue
+                if e.code == 403:
+                    raise ApiDown("Warcraft Logs refused this key (403). It may have been cancelled.")
                 if e.code == 429:
                     self.wait_for_reset(force=True)
                     continue
                 if e.code >= 500 and attempt < 5:
                     time.sleep(5 * (attempt + 1))
                     continue
-                raise
-            except urllib.error.URLError:
+                raise ApiDown(f"Warcraft Logs returned an error ({e.code}).")
+            except urllib.error.URLError as e:
                 if attempt < 5:
                     time.sleep(5 * (attempt + 1))
                     continue
-                raise
+                raise ApiDown(f"Couldn't reach Warcraft Logs ({e}).")
             if res.get("errors") and not allow_errors:
                 msgs = "; ".join(e.get("message", "?") for e in res["errors"])
                 if "rate limit" in msgs.lower():
@@ -245,7 +258,7 @@ class WCL:
             if with_errors:
                 return res.get("data") or {}, res.get("errors") or []
             return res.get("data") or {}
-        raise RuntimeError("Warcraft Logs API kept failing, try again later.")
+        raise ApiDown("Warcraft Logs kept failing, so it's probably having trouble right now.")
 
     def wait_for_reset(self, force=False):
         try:
@@ -263,6 +276,9 @@ class WCL:
         else:
             wait = 300
         left = time_left()
+        if STOP_AT_LIMIT:
+            log(f"\n  Hourly API limit reached ({wait // 60} min until it resets).")
+            raise TimeUp()
         if left is not None and wait > left:
             raise TimeUp()
         log(f"\n  Hourly API limit reached. Waiting {wait // 60} min {wait % 60} s, then continuing...")
@@ -387,6 +403,8 @@ def fetch_stats(api, chunk):
     api.wait_for_reset()
     try:
         d = api.query(q, allow_errors=True)
+    except ApiDown:
+        raise
     except Exception as e:
         log(f"    Skipped {len(chunk)} logs ({e})")
         return
@@ -412,6 +430,8 @@ def fetch_talents(api, wanted):
     api.wait_for_reset()
     try:
         d, errors = api.query(q, allow_errors=True, with_errors=True)
+    except ApiDown:
+        raise
     except Exception as e:
         log(f"    Skipped talents for {len(wanted)} logs ({e})")
         return
@@ -782,7 +802,7 @@ def prune_cache(zone, specs, region):
     log(f"Removed {removed} saved logs that have dropped out of the top 10.")
 
 
-def build_from_cache(zone, specs, bosses, region, api=None):
+def build_from_cache(zone, specs, bosses, region, api=None, addon=False):
     """Build the page using only saved data. Bosses with no saved rankings are left out."""
     item_names = {int(k): v for k, v in (cache_get("items", "names") or {}).items()}
     result = {"zone": zone["name"], "region": region or "All regions",
@@ -830,8 +850,31 @@ def build_from_cache(zone, specs, bosses, region, api=None):
                 for t in p["trinkets"]:
                     t["name"] = t.get("name") or item_names.get(t["id"])
     result["progress"] = {"loaded": loaded, "total": total, "talents": tal_loaded}
+    if ADDON_DIR:
+        result["addon"] = "MythicStats.zip"
     write_page(result, open_browser=False)
+    if addon and ADDON_DIR:
+        try:
+            write_addon(result, ADDON_DIR, INTERFACE)
+        except Exception as e:
+            log(f"Couldn't write the addon: {e}")
     return loaded, total
+
+
+def rebuild_offline(args):
+    """Build the page from saved data alone. Used when the API can't be reached."""
+    meta = cache_get("meta", "zones+specs")
+    if not meta:
+        return False
+    zone = pick_zone(meta["zones"], args.zone)
+    if not zone:
+        return False
+    try:
+        loaded, total = build_from_cache(zone, meta["specs"], zone["encounters"], args.region, addon=True)
+    except Exception:
+        return False
+    log(f"Page saved with {loaded} of {total} players loaded.")
+    return True
 
 
 def run(args):
@@ -859,7 +902,7 @@ def run(args):
         if not zone:
             log("Raid not found. Use --list-zones to see options.")
             return
-        loaded, total = build_from_cache(zone, meta["specs"], zone["encounters"], args.region)
+        loaded, total = build_from_cache(zone, meta["specs"], zone["encounters"], args.region, addon=True)
         log(f"Page built with {loaded} of {total} players' stats loaded.")
         open_page()
         return
@@ -887,48 +930,80 @@ def run(args):
         build_from_cache(zone, specs, zone["encounters"], args.region)
 
     opened = False
-    try:
-        # Rankings for every chosen boss first, so the page lists all specs straight away
-        ranks_by_boss = {}
-        rstats = {"checked": 0, "new": 0, "specs_changed": 0}
-        ttl = args.rank_age * 3600 if args.rank_age is not None else RANKINGS_TTL
-        for b in bosses:
-            log(f"{b['name']}: checking top 10 per spec...")
-            ranks_by_boss[b["id"]] = get_rankings(api, b["id"], specs, args.region,
-                                                  args.refresh, ttl, rstats)
-        if rstats["checked"]:
-            log(f"\nChecked {rstats['checked']} spec rankings: "
-                f"{rstats['new']} new entries across {rstats['specs_changed']} specs.")
-        rebuild()
-        open_page()
-        opened = True
-        log(f"\nThe page is open and fills in as logs are read. Refresh your browser to see new data.")
+    attempt = 0
+    while True:
+        try:
+            # Rankings for every chosen boss first, so the page lists all specs straight away
+            ranks_by_boss = {}
+            rstats = {"checked": 0, "new": 0, "specs_changed": 0}
+            ttl = args.rank_age * 3600 if args.rank_age is not None else RANKINGS_TTL
+            for b in bosses:
+                log(f"{b['name']}: checking top 10 per spec...")
+                ranks_by_boss[b["id"]] = get_rankings(api, b["id"], specs, args.region,
+                                                      args.refresh, ttl, rstats)
+            if rstats["checked"]:
+                log(f"\nChecked {rstats['checked']} spec rankings: "
+                    f"{rstats['new']} new entries across {rstats['specs_changed']} specs.")
+            rebuild()
+            if not opened:
+                open_page()
+                opened = True
+                log("\nThe page is built and fills in as logs are read. "
+                    "Refresh your browser to see new data.")
 
-        # Then logs, highest-ranked players first across all bosses and specs
-        best = {}
-        names = {}
-        for ranks in ranks_by_boss.values():
-            for lst in ranks.values():
-                for i, r in enumerate(lst):
-                    rep = r.get("report") or {}
-                    if rep.get("code") and rep.get("fightID") is not None:
-                        k = (rep["code"], int(rep["fightID"]))
-                        best[k] = min(best.get(k, 99), i)
-                        names.setdefault(k, set()).add(r.get("name", ""))
-        fights = sorted(best, key=lambda k: best[k])
-        process_fights(api, fights, names, on_batch=rebuild)
-        if args.prune:
-            prune_cache(zone, specs, args.region)
-        loaded, total = build_from_cache(zone, specs, zone["encounters"], args.region, api)
-        log(f"\nDone: {loaded} of {total} players loaded ({api.calls} API requests).")
-        log("Refresh the page in your browser to see everything.")
-    except (KeyboardInterrupt, TimeUp) as e:
-        loaded, total = build_from_cache(zone, specs, zone["encounters"], args.region)
-        why = "Out of time for this run." if isinstance(e, TimeUp) else "Stopped."
-        log(f"\n{why} Page saved with {loaded} of {total} players loaded.")
-        log("Run the script again later to carry on from here.")
-        if not opened:
-            open_page()
+            # Then logs, highest-ranked players first across all bosses and specs
+            best = {}
+            names = {}
+            for ranks in ranks_by_boss.values():
+                for lst in ranks.values():
+                    for i, r in enumerate(lst):
+                        rep = r.get("report") or {}
+                        if rep.get("code") and rep.get("fightID") is not None:
+                            k = (rep["code"], int(rep["fightID"]))
+                            best[k] = min(best.get(k, 99), i)
+                            names.setdefault(k, set()).add(r.get("name", ""))
+            fights = sorted(best, key=lambda k: best[k])
+            process_fights(api, fights, names, on_batch=rebuild)
+            if args.prune:
+                prune_cache(zone, specs, args.region)
+            loaded, total = build_from_cache(zone, specs, zone["encounters"], args.region, api, addon=True)
+            log(f"\nDone: {loaded} of {total} players loaded ({api.calls} API requests).")
+            log("Refresh the page in your browser to see everything.")
+            return
+
+        except (KeyboardInterrupt, TimeUp) as e:
+            loaded, total = build_from_cache(zone, specs, zone["encounters"], args.region, addon=True)
+            why = "Stopped." if isinstance(e, KeyboardInterrupt) else (
+                "Used up this hour's API allowance." if STOP_AT_LIMIT else "Out of time for this run.")
+            log(f"\n{why} Page saved with {loaded} of {total} players loaded.")
+            log("Run the script again later to carry on from here.")
+            if not opened:
+                open_page()
+            return
+
+        except ApiDown as e:
+            loaded, total = build_from_cache(zone, specs, zone["encounters"], args.region, addon=True)
+            if not opened:
+                open_page()
+                opened = True
+            log(f"\nWarcraft Logs isn't usable right now: {e}")
+            log(f"Page saved with {loaded} of {total} players loaded.")
+            attempt += 1
+            wait = min(1800, 120 * 2 ** (attempt - 1))
+            left = time_left()
+            if left is not None and wait + 120 > left:
+                log("No time left in this run to wait for it. Saving and stopping.")
+                return
+            if left is None and attempt > RETRY_TRIES:
+                log(f"Gave up after {RETRY_TRIES} tries. Run the script again later.")
+                return
+            log(f"Waiting {wait // 60} min, then trying again (try {attempt}).")
+            try:
+                time.sleep(wait)
+            except KeyboardInterrupt:
+                log("\nStopped.")
+                return
+            log("Trying Warcraft Logs again...")
 
 
 # --------------------------------------------------------------------------- #
@@ -1022,6 +1097,91 @@ def open_page():
         pass
 
 
+LUA_CLASS_FILE = ('MythicStatsDB = MythicStatsDB or {}\n'
+                  'MythicStatsDB.classes = MythicStatsDB.classes or {}\n'
+                  'MythicStatsDB.classes["%s"] = %s\n')
+
+
+def lua_str(v):
+    return '"' + str(v).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def lua_value(v, indent=0):
+    pad = "  " * indent
+    if isinstance(v, dict):
+        parts = [f'{pad}  [{lua_str(k)}] = {lua_value(x, indent + 1)}' for k, x in v.items()]
+        return "{\n" + ",\n".join(parts) + f"\n{pad}}}"
+    if isinstance(v, (list, tuple)):
+        parts = [f'{pad}  {lua_value(x, indent + 1)}' for x in v]
+        return "{\n" + ",\n".join(parts) + f"\n{pad}}}"
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return f"{v:.10g}"
+    if v is None:
+        return "nil"
+    return lua_str(v)
+
+
+def write_addon(data, addon_dir, interface):
+    """Write a World of Warcraft addon folder with the same data as the page."""
+    addon_dir = os.path.abspath(addon_dir)
+    data_dir = os.path.join(addon_dir, "data")
+    os.makedirs(data_dir, exist_ok=True)
+
+    core_src = os.path.join(HERE, "addon", "core.lua")
+    core = open(core_src, encoding="utf-8").read() if os.path.exists(core_src) else ADDON_CORE_LUA
+    with open(os.path.join(addon_dir, "core.lua"), "w", encoding="utf-8") as f:
+        f.write(core)
+
+    bosses = [b["name"] for b in data["bosses"]]
+    gen = data["generated"][:16].replace("T", " ") + " UTC"
+    header = ("MythicStatsDB = MythicStatsDB or {}\n"
+              f'MythicStatsDB.zone = {lua_str(data["zone"])}\n'
+              f'MythicStatsDB.updated = {lua_str(gen)}\n'
+              f'MythicStatsDB.region = {lua_str(data["region"])}\n'
+              f'MythicStatsDB.bosses = {lua_value(bosses)}\n')
+    with open(os.path.join(data_dir, "_info.lua"), "w", encoding="utf-8") as f:
+        f.write(header)
+
+    # One file per class, so the game parses less at a time
+    classes = {}
+    for b in data["bosses"]:
+        for sp in b["specs"]:
+            c = classes.setdefault(sp["cls"], {"className": sp["className"], "specs": {}})
+            entry = c["specs"].setdefault(sp["spec"], {"spec": sp["spec"], "role": sp["role"],
+                                                       "metric": sp["metric"], "players": []})
+            for p in sp["players"]:
+                st = p.get("stats") or {}
+                entry["players"].append({
+                    "name": p["name"], "guild": p.get("guild") or "", "boss": b["name"],
+                    "amount": round(p.get("amount") or 0), "ilvl": round(p.get("ilvl") or 0, 1),
+                    "crit": round(st.get("crit") or 0) or None,
+                    "haste": round(st.get("haste") or 0) or None,
+                    "mastery": round(st.get("mastery") or 0) or None,
+                    "vers": round(st.get("vers") or 0) or None,
+                    "trinkets": [t["id"] for t in p.get("trinkets") or []],
+                    "talents": p.get("talents") or "",
+                })
+    files = ["data\\_info.lua"]
+    for cls, c in sorted(classes.items()):
+        payload = {"className": c["className"], "specs": list(c["specs"].values())}
+        with open(os.path.join(data_dir, cls + ".lua"), "w", encoding="utf-8") as f:
+            f.write(LUA_CLASS_FILE % (cls, lua_value(payload)))
+        files.append(f"data\\{cls}.lua")
+
+    toc = [f"## Interface: {interface}",
+           "## Title: Mythic Stat Sheet",
+           f"## Notes: Top 10 Mythic logs per spec. Data from {gen}.",
+           "## Version: 1.0",
+           "## IconTexture: Interface\\Icons\\INV_Misc_Book_09",
+           ""] + files + ["core.lua", ""]
+    with open(os.path.join(addon_dir, "MythicStats.toc"), "w", encoding="utf-8") as f:
+        f.write("\n".join(toc))
+    log(f"Addon written to {addon_dir}")
+    return addon_dir
+
+
 def write_page(data, open_browser=True):
     global OUT_FILE
     tpl_path = os.path.join(HERE, "stat_sheet_template.html")
@@ -1038,6 +1198,333 @@ def write_page(data, open_browser=True):
     os.replace(tmp, OUT_FILE)
     if open_browser:
         open_page()
+
+
+ADDON_CORE_LUA = r"""-- MythicStats: top 10 Mythic logs per spec, with stats, trinkets and talent codes.
+-- Data lives in the data/*.lua files, written by wcl_mythic_stats.py.
+
+local ADDON = ...
+MythicStatsDB = MythicStatsDB or {}
+local DB = MythicStatsDB
+
+local CLASS_ORDER = {
+  "DeathKnight", "DemonHunter", "Druid", "Evoker", "Hunter", "Mage", "Monk",
+  "Paladin", "Priest", "Rogue", "Shaman", "Warlock", "Warrior",
+}
+
+local state = { class = nil, spec = nil, boss = 1 }
+
+local function classColor(cls)
+  local c = RAID_CLASS_COLORS and RAID_CLASS_COLORS[string.upper(cls:gsub("(%l)(%u)", "%1%2"))]
+  c = c or (CUSTOM_CLASS_COLORS and CUSTOM_CLASS_COLORS[cls])
+  if not c then
+    local key = cls:upper()
+    c = RAID_CLASS_COLORS and RAID_CLASS_COLORS[key]
+  end
+  return c or { r = 0.9, g = 0.9, b = 0.9 }
+end
+
+local function classData(cls) return DB.classes and DB.classes[cls] end
+
+local function firstClass()
+  local _, myClass = UnitClass("player")           -- e.g. "DEATHKNIGHT"
+  for _, cls in ipairs(CLASS_ORDER) do
+    if cls:upper() == myClass and classData(cls) then return cls end
+  end
+  for _, cls in ipairs(CLASS_ORDER) do
+    if classData(cls) then return cls end
+  end
+end
+
+local function fmtAmount(v)
+  if not v or v == 0 then return "-" end
+  if v >= 1e6 then return string.format("%.2fM", v / 1e6) end
+  if v >= 1e3 then return string.format("%.1fK", v / 1e3) end
+  return tostring(math.floor(v))
+end
+
+local function comma(v)
+  if not v or v == 0 then return "-" end
+  local s = tostring(math.floor(v))
+  local out = s:reverse():gsub("(%d%d%d)", "%1,"):reverse()
+  return (out:gsub("^,", ""))
+end
+
+----------------------------------------------------------------------
+-- Copy window
+----------------------------------------------------------------------
+local copyFrame
+local function showCopy(text, label)
+  if not copyFrame then
+    local f = CreateFrame("Frame", "MythicStatsCopyFrame", UIParent, "BasicFrameTemplateWithInset")
+    f:SetSize(460, 150)
+    f:SetPoint("CENTER")
+    f:SetFrameStrata("DIALOG")
+    f:SetMovable(true); f:EnableMouse(true); f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", f.StartMoving)
+    f:SetScript("OnDragStop", f.StopMovingOrSizing)
+    f.TitleText:SetText("Talent code")
+
+    f.info = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    f.info:SetPoint("TOPLEFT", 14, -32)
+    f.info:SetPoint("TOPRIGHT", -14, -32)
+    f.info:SetJustifyH("LEFT")
+
+    local box = CreateFrame("EditBox", nil, f, "InputBoxTemplate")
+    box:SetPoint("TOPLEFT", 18, -72)
+    box:SetPoint("TOPRIGHT", -18, -72)
+    box:SetHeight(24)
+    box:SetAutoFocus(false)
+    box:SetFontObject(ChatFontNormal)
+    box:SetScript("OnEscapePressed", function() f:Hide() end)
+    box:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
+    box:SetScript("OnTextChanged", function(self, user) if user then self:SetText(self.value or "") self:HighlightText() end end)
+    f.box = box
+
+    f.hint = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    f.hint:SetPoint("TOPLEFT", 18, -104)
+    f.hint:SetPoint("TOPRIGHT", -18, -104)
+    f.hint:SetJustifyH("LEFT")
+    f.hint:SetText("Press Ctrl+C to copy, then open your talents, click the loadout dropdown and choose Import.")
+    copyFrame = f
+  end
+  copyFrame.info:SetText(label or "")
+  copyFrame.box.value = text
+  copyFrame.box:SetText(text)
+  copyFrame:Show()
+  copyFrame.box:SetFocus()
+  copyFrame.box:HighlightText()
+end
+
+----------------------------------------------------------------------
+-- Main window
+----------------------------------------------------------------------
+local main, specButtons, bossButtons, rows = nil, {}, {}, {}
+local ROW_H = 46
+
+local function currentSpecData()
+  local cd = classData(state.class)
+  if not cd then return nil end
+  for _, sp in ipairs(cd.specs) do
+    if sp.spec == state.spec then return sp end
+  end
+  return cd.specs[1]
+end
+
+local function playersFor(sp)
+  if not sp then return {} end
+  local bossName = DB.bosses[state.boss]
+  local out = {}
+  for _, p in ipairs(sp.players) do
+    if state.boss == 0 or p.boss == bossName then out[#out + 1] = p end
+  end
+  table.sort(out, function(a, b) return (a.amount or 0) > (b.amount or 0) end)
+  return out
+end
+
+local function trinketText(p)
+  if not p.trinkets or #p.trinkets == 0 then return "|cff808080No trinket data|r" end
+  local parts = {}
+  for _, id in ipairs(p.trinkets) do
+    local name = C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(id)
+    parts[#parts + 1] = name or ("Item " .. id)
+  end
+  return table.concat(parts, ", ")
+end
+
+local function updateRows()
+  local sp = currentSpecData()
+  local players = playersFor(sp)
+  for i, row in ipairs(rows) do
+    local p = players[i]
+    if p then
+      local col = classColor(state.class)
+      row.name:SetText(string.format("|cff%02x%02x%02x%s|r  |cff9d9d9d%s|r",
+        col.r * 255, col.g * 255, col.b * 255, p.name, p.guild or ""))
+      row.rank:SetText("#" .. i)
+      row.top:SetText(string.format("%s %s   ilvl %.1f   %s",
+        fmtAmount(p.amount), sp.metric or "DPS", p.ilvl or 0, p.boss or ""))
+      if p.crit then
+        row.stats:SetText(string.format(
+          "|cffff6b5bCrit|r %s   |cfff4c542Haste|r %s   |cffa98cffMastery|r %s   |cff3ecf9aVers|r %s",
+          comma(p.crit), comma(p.haste), comma(p.mastery), comma(p.vers)))
+      else
+        row.stats:SetText("|cff808080No stats in this log|r")
+      end
+      row.trinkets:SetText(trinketText(p))
+      row.copy:SetShown(p.talents and p.talents ~= "")
+      row.copy.code = p.talents
+      row.copy.label = string.format("%s %s, #%d on %s", sp.spec, state.class, i, p.boss or "")
+      row:Show()
+    else
+      row:Hide()
+    end
+  end
+  if main then
+    main.empty:SetShown(#players == 0)
+    main.TitleText:SetText(string.format("Mythic Stat Sheet - %s", DB.zone or ""))
+    main.sub:SetText(string.format("%s %s, top 10 %s   |cff808080Updated %s|r",
+      state.spec or "", state.class or "", state.boss == 0 and "across all bosses"
+      or ("on " .. (DB.bosses[state.boss] or "")), DB.updated or "?"))
+  end
+end
+
+local function buildSpecButtons()
+  for _, b in ipairs(specButtons) do b:Hide() end
+  local cd = classData(state.class)
+  if not cd then return end
+  for i, sp in ipairs(cd.specs) do
+    local b = specButtons[i]
+    if not b then
+      b = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
+      b:SetSize(124, 22)
+      b:SetPoint("TOPLEFT", 14, -78 - (i - 1) * 25)
+      specButtons[i] = b
+    end
+    b:SetText(sp.spec)
+    b:SetScript("OnClick", function() state.spec = sp.spec; updateRows(); buildSpecButtons() end)
+    b:SetEnabled(sp.spec ~= state.spec)
+    b:Show()
+  end
+end
+
+local function cycleClass(step)
+  local idx = 1
+  for i, c in ipairs(CLASS_ORDER) do if c == state.class then idx = i end end
+  for _ = 1, #CLASS_ORDER do
+    idx = idx + step
+    if idx < 1 then idx = #CLASS_ORDER elseif idx > #CLASS_ORDER then idx = 1 end
+    if classData(CLASS_ORDER[idx]) then break end
+  end
+  state.class = CLASS_ORDER[idx]
+  local cd = classData(state.class)
+  state.spec = cd and cd.specs[1] and cd.specs[1].spec
+  buildSpecButtons(); updateRows()
+  main.className:SetText(cd and cd.className or state.class)
+end
+
+local function buildBossButtons()
+  local names = { "All bosses" }
+  for i, n in ipairs(DB.bosses or {}) do names[i + 1] = n end
+  for i, n in ipairs(names) do
+    local b = bossButtons[i]
+    if not b then
+      b = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
+      b:SetSize(150, 20)
+      b:SetPoint("TOPLEFT", 150, -78 - (i - 1) * 22)
+      bossButtons[i] = b
+    end
+    b:SetText(n)
+    b:SetScript("OnClick", function() state.boss = i - 1; updateRows(); buildBossButtons() end)
+    b:SetEnabled(state.boss ~= i - 1)
+    b:Show()
+  end
+end
+
+local function createMain()
+  local f = CreateFrame("Frame", "MythicStatsFrame", UIParent, "BasicFrameTemplateWithInset")
+  f:SetSize(940, 620)
+  f:SetPoint("CENTER")
+  f:SetMovable(true); f:EnableMouse(true); f:RegisterForDrag("LeftButton")
+  f:SetScript("OnDragStart", f.StartMoving)
+  f:SetScript("OnDragStop", f.StopMovingOrSizing)
+  f:SetScript("OnShow", function() updateRows() end)
+  tinsert(UISpecialFrames, "MythicStatsFrame")   -- Escape closes it
+  main = f
+
+  f.sub = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  f.sub:SetPoint("TOPLEFT", 14, -32)
+  f.sub:SetJustifyH("LEFT")
+
+  local prev = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+  prev:SetSize(24, 22); prev:SetPoint("TOPLEFT", 14, -52); prev:SetText("<")
+  prev:SetScript("OnClick", function() cycleClass(-1) end)
+
+  local nxt = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+  nxt:SetSize(24, 22); nxt:SetPoint("TOPLEFT", 114, -52); nxt:SetText(">")
+  nxt:SetScript("OnClick", function() cycleClass(1) end)
+
+  f.className = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  f.className:SetPoint("LEFT", prev, "RIGHT", 4, 0)
+  f.className:SetPoint("RIGHT", nxt, "LEFT", -4, 0)
+  f.className:SetJustifyH("CENTER")
+
+  local bossLabel = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  bossLabel:SetPoint("TOPLEFT", 150, -56)
+  bossLabel:SetText("Boss")
+
+  f.empty = f:CreateFontString(nil, "OVERLAY", "GameFontDisable")
+  f.empty:SetPoint("CENTER", 150, 0)
+  f.empty:SetText("No rankings for this spec on this boss.")
+
+  for i = 1, 10 do
+    local row = CreateFrame("Frame", nil, f)
+    row:SetSize(620, ROW_H)
+    row:SetPoint("TOPLEFT", 310, -76 - (i - 1) * (ROW_H + 4))
+
+    row.bg = row:CreateTexture(nil, "BACKGROUND")
+    row.bg:SetAllPoints()
+    row.bg:SetColorTexture(1, 1, 1, i % 2 == 0 and 0.03 or 0.06)
+
+    row.rank = row:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    row.rank:SetPoint("TOPLEFT", 6, -4)
+    row.rank:SetWidth(34)
+
+    row.name = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    row.name:SetPoint("TOPLEFT", 44, -4)
+    row.name:SetJustifyH("LEFT")
+
+    row.top = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    row.top:SetPoint("TOPRIGHT", -96, -4)
+    row.top:SetJustifyH("RIGHT")
+
+    row.stats = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    row.stats:SetPoint("TOPLEFT", 44, -21)
+    row.stats:SetJustifyH("LEFT")
+
+    row.trinkets = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    row.trinkets:SetPoint("TOPLEFT", 44, -34)
+    row.trinkets:SetWidth(430)
+    row.trinkets:SetJustifyH("LEFT")
+
+    row.copy = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+    row.copy:SetSize(88, 22)
+    row.copy:SetPoint("TOPRIGHT", -4, -12)
+    row.copy:SetText("Talents")
+    row.copy:SetScript("OnClick", function(self) showCopy(self.code, self.label) end)
+
+    rows[i] = row
+  end
+  f:Hide()
+end
+
+local function toggle()
+  if not DB.classes then
+    print("|cff3fc7ebMythicStats|r: no data found. Download a newer copy of the addon.")
+    return
+  end
+  if not main then
+    createMain()
+    state.class = state.class or firstClass()
+    local cd = classData(state.class)
+    state.spec = cd and cd.specs[1] and cd.specs[1].spec
+    main.className:SetText(cd and cd.className or state.class or "")
+    buildSpecButtons(); buildBossButtons()
+  end
+  if main:IsShown() then main:Hide() else main:Show() end
+end
+
+SLASH_MYTHICSTATS1 = "/mythicstats"
+SLASH_MYTHICSTATS2 = "/ms"
+SlashCmdList["MYTHICSTATS"] = toggle
+
+local loader = CreateFrame("Frame")
+loader:RegisterEvent("PLAYER_LOGIN")
+loader:SetScript("OnEvent", function()
+  print("|cff3fc7ebMythicStats|r loaded. Type |cffffff00/ms|r for the top 10 per spec. Data from "
+    .. (DB.updated or "?") .. ".")
+end)
+"""
 
 
 PAGE_TEMPLATE = r"""<!DOCTYPE html>
@@ -1082,6 +1569,8 @@ button,select,input{font:inherit;color:inherit}
 .stamp i{width:.5rem;height:.5rem;border-radius:50%;background:var(--vers);flex:0 0 auto}
 .stamp.old i{background:var(--haste)}
 .stamp.stale i{background:var(--crit)}
+.dl{color:var(--ink);text-decoration:none;border-bottom:1px solid var(--line)}
+.dl:hover{border-bottom-color:var(--ink)}
 .bosses{display:flex;gap:.2rem;overflow-x:auto;min-width:0;flex:1;scrollbar-width:none;align-self:flex-end}
 .bosses::-webkit-scrollbar{display:none}
 .bosses button{flex:0 0 auto;background:none;border:0;border-bottom:3px solid transparent;padding:.5rem .8rem .6rem;cursor:pointer;color:var(--dim);font-family:var(--display);font-weight:500;font-size:1.15rem;white-space:nowrap}
@@ -1626,7 +2115,8 @@ function init(){
     + `<span>${esc(gen.toLocaleString(undefined,{dateStyle:"medium",timeStyle:"short"}))}</span>`
     + `<span>Mythic, top 10 per spec, ${esc(DATA.region)}</span>`
     + (partial ? `<span class="warn">${pr.loaded} of ${pr.total} players loaded</span>` : "")
-    + (pr && pr.total && pr.talents !== undefined && pr.talents < pr.total ? `<span class="warn">talents for ${pr.talents}</span>` : "");
+    + (pr && pr.total && pr.talents !== undefined && pr.talents < pr.total ? `<span class="warn">talents for ${pr.talents}</span>` : "")
+    + (DATA.addon ? `<a class="dl" href="${esc(DATA.addon)}" download>Download the in-game addon</a>` : "");
 
   const tabs = DATA.bosses.map((b,i)=>[i,b.name]);
   if(DATA.bosses.length > 1) tabs.push(["all","All bosses"]);
@@ -1676,10 +2166,16 @@ def main():
     ap.add_argument("--deadline", type=float, metavar="MINUTES",
                     help="stop fetching after this many minutes and save the page")
     ap.add_argument("--no-open", action="store_true", help="don't open a browser (for servers)")
+    ap.add_argument("--addon", nargs="?", const="MythicStats", metavar="FOLDER",
+                    help="also write the in-game addon into this folder")
+    ap.add_argument("--interface", default="120000",
+                    help="addon Interface number for your game version (default 120000)")
     ap.add_argument("--rank-age", type=float, metavar="HOURS",
                     help="reuse saved rankings younger than this (default 12)")
     ap.add_argument("--max-new", type=int, metavar="N",
                     help="read at most N new logs this run")
+    ap.add_argument("--stop-at-limit", action="store_true",
+                    help="stop and save when the hourly API limit is hit, instead of waiting")
     ap.add_argument("--compact", action="store_true",
                     help="shrink the saved cache folder and drop logs that are no longer needed")
     ap.add_argument("--limit", action="store_true",
@@ -1687,7 +2183,7 @@ def main():
     ap.add_argument("--prune", action="store_true",
                     help="after updating, delete saved logs that dropped out of the top 10")
     args = ap.parse_args()
-    global OUT_FILE, DEADLINE, OPEN_BROWSER, MAX_NEW
+    global OUT_FILE, DEADLINE, OPEN_BROWSER, MAX_NEW, STOP_AT_LIMIT, ADDON_DIR, INTERFACE
     if args.out:
         OUT_FILE = os.path.abspath(args.out)
         os.makedirs(os.path.dirname(OUT_FILE) or ".", exist_ok=True)
@@ -1697,6 +2193,11 @@ def main():
         OPEN_BROWSER = False
     if args.max_new:
         MAX_NEW = args.max_new
+    if args.stop_at_limit:
+        STOP_AT_LIMIT = True
+    if args.addon:
+        ADDON_DIR = os.path.abspath(args.addon)
+    INTERFACE = args.interface
     try:
         if args.demo:
             demo(args)
@@ -1706,6 +2207,11 @@ def main():
         log("\nStopped.")
     except TimeUp:
         log("\nOut of time for this run.")
+    except ApiDown as e:
+        log(f"\nWarcraft Logs isn't usable right now: {e}")
+        if rebuild_offline(args):
+            log("The page was rebuilt from saved data, so it still shows everything downloaded so far.")
+        log("Nothing was lost; run the script again later.")
     except Exception as e:
         log(f"\nSomething went wrong: {e}")
         log("If it mentions a field or argument, the Warcraft Logs API may have changed. "
