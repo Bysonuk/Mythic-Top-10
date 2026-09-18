@@ -60,7 +60,7 @@ DEADLINE = None   # unix time to stop by, set with --deadline
 MAX_NEW = 0       # cap on logs read per run, set with --max-new
 STOP_AT_LIMIT = False  # stop instead of waiting for the hourly limit (--stop-at-limit)
 ADDON_DIR = None  # where to write the in-game addon, set with --addon
-INTERFACE = "120000"
+INTERFACE = "120105"
 RETRY_TRIES = 6   # how many times to wait and retry when the API is unavailable
 
 
@@ -1170,7 +1170,7 @@ def write_addon(data, addon_dir, interface):
             f.write(LUA_CLASS_FILE % (cls, lua_value(payload)))
         files.append(f"data\\{cls}.lua")
 
-    toc = [f"## Interface: {interface}",
+    toc = [f"## Interface: {', '.join(x.strip() for x in str(interface).split(','))}",
            "## Title: Mythic Stat Sheet",
            f"## Notes: Top 10 Mythic logs per spec. Data from {gen}.",
            "## Version: 1.0",
@@ -2168,8 +2168,8 @@ def main():
     ap.add_argument("--no-open", action="store_true", help="don't open a browser (for servers)")
     ap.add_argument("--addon", nargs="?", const="MythicStats", metavar="FOLDER",
                     help="also write the in-game addon into this folder")
-    ap.add_argument("--interface", default="120000",
-                    help="addon Interface number for your game version (default 120000)")
+    ap.add_argument("--interface", default="120105",
+                    help="addon Interface number(s), comma separated (default 120105)")
     ap.add_argument("--rank-age", type=float, metavar="HOURS",
                     help="reuse saved rankings younger than this (default 12)")
     ap.add_argument("--max-new", type=int, metavar="N",

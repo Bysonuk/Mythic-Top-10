@@ -10,7 +10,7 @@ Needs:
   CF_PROJECT_ID  the numeric project ID shown on your CurseForge project page
 
 Usage:
-  python cf_upload.py site/MythicStats.zip --interface 120000 --marker .cf_last_upload
+  python cf_upload.py site/MythicStats.zip --interface 120105 --marker .cf_last_upload
   python cf_upload.py site/MythicStats.zip --force          # ignore the once-a-day rule
 """
 
@@ -36,21 +36,29 @@ def call(path, token, data=None, headers=None):
     return json.loads(body) if body else {}
 
 
-def game_version_id(token, interface):
-    """Turn an Interface number like 120000 into CurseForge's game version ID."""
+def version_name(interface):
+    i = int(str(interface).strip())
+    return f"{i // 10000}.{i // 100 % 100}.{i % 100}"
+
+
+def game_version_ids(token, interfaces):
+    """Turn Interface numbers like 120105 into CurseForge game version IDs."""
     versions = call("/game/versions", token)
-    want = f"{int(interface) // 10000}.{int(interface) // 100 % 100}.{int(interface) % 100}"
-    for v in versions:
-        if v.get("name") == want:
-            return v["id"], v["name"]
-    # Nothing exact: use the newest version that shares the same major.minor
-    prefix = want.rsplit(".", 1)[0] + "."
-    same = [v for v in versions if str(v.get("name", "")).startswith(prefix)]
-    if same:
-        v = max(same, key=lambda v: v["id"])
-        return v["id"], v["name"]
-    v = max(versions, key=lambda v: v["id"])
-    return v["id"], v["name"]
+    ids, names = [], []
+    for iface in str(interfaces).split(","):
+        want = version_name(iface)
+        match = next((v for v in versions if v.get("name") == want), None)
+        if not match:
+            prefix = want.rsplit(".", 1)[0] + "."
+            same = [v for v in versions if str(v.get("name", "")).startswith(prefix)]
+            match = max(same, key=lambda v: v["id"]) if same else None
+        if match and match["id"] not in ids:
+            ids.append(match["id"])
+            names.append(match["name"])
+    if not ids:
+        v = max(versions, key=lambda v: v["id"])
+        ids, names = [v["id"]], [v["name"]]
+    return ids, names
 
 
 def multipart(fields, filename, filedata):
@@ -69,7 +77,8 @@ def multipart(fields, filename, filedata):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("zip_path")
-    ap.add_argument("--interface", default="120000")
+    ap.add_argument("--interface", default="120105",
+                    help="Interface number(s) the file supports, comma separated")
     ap.add_argument("--marker", default=".cf_last_upload")
     ap.add_argument("--display-name", default=None)
     ap.add_argument("--release-type", default="release", choices=["release", "beta", "alpha"])
@@ -106,7 +115,7 @@ def main():
             return 0
 
     try:
-        gv_id, gv_name = game_version_id(token, args.interface)
+        gv_ids, gv_names = game_version_ids(token, args.interface)
     except urllib.error.HTTPError as e:
         print(f"Couldn't read CurseForge game versions ({e.code}). Nothing was uploaded.")
         return 0
@@ -116,7 +125,7 @@ def main():
         "changelog": f"Rankings refreshed on {today}.",
         "changelogType": "text",
         "displayName": name,
-        "gameVersions": [gv_id],
+        "gameVersions": gv_ids,
         "releaseType": args.release_type,
     }
     body, ctype = multipart({"metadata": json.dumps(meta)}, args.zip_path, blob)
@@ -130,7 +139,7 @@ def main():
         print(f"Couldn't reach CurseForge ({e}). Nothing was uploaded.")
         return 0
 
-    print(f"Uploaded {name} to CurseForge for game version {gv_name} (file {res.get('id')}).")
+    print(f"Uploaded {name} to CurseForge for {', '.join(gv_names)} (file {res.get('id')}).")
     with open(args.marker, "w", encoding="utf-8") as f:
         json.dump({"date": today, "sha1": digest, "file": res.get("id")}, f)
     return 0
