@@ -1273,10 +1273,9 @@ def write_page(data, open_browser=True):
         open_page()
 
 
-ADDON_CORE_LUA = r"""-- MythicStats: top 10 Mythic logs per spec, with stats, trinkets and talent codes.
+ADDON_CORE_LUA = r"""-- MythicStats: top 10 Mythic logs per spec, with stats, trinkets, potions and talent codes.
 -- Data lives in the data/*.lua files, written by wcl_mythic_stats.py.
 
-local ADDON = ...
 MythicStatsDB = MythicStatsDB or {}
 local DB = MythicStatsDB
 
@@ -1284,31 +1283,79 @@ local CLASS_ORDER = {
   "DeathKnight", "DemonHunter", "Druid", "Evoker", "Hunter", "Mage", "Monk",
   "Paladin", "Priest", "Rogue", "Shaman", "Warlock", "Warrior",
 }
+local QUESTION = "Interface\\Icons\\INV_Misc_QuestionMark"
+local ROW_H, SIDE_W, SIDE_ROW = 74, 210, 32
 
-local state = { class = nil, spec = nil, boss = 1 }
+local state = { key = nil, boss = 1 }
+local specs, byKey, iconFor, classFileFor = {}, {}, {}, {}
+local main, sideButtons, bossButtons, rows = nil, {}, {}, {}
 
-local function classColor(cls)
-  local c = RAID_CLASS_COLORS and RAID_CLASS_COLORS[string.upper(cls:gsub("(%l)(%u)", "%1%2"))]
-  c = c or (CUSTOM_CLASS_COLORS and CUSTOM_CLASS_COLORS[cls])
-  if not c then
-    local key = cls:upper()
-    c = RAID_CLASS_COLORS and RAID_CLASS_COLORS[key]
-  end
+----------------------------------------------------------------------
+-- Lookups
+----------------------------------------------------------------------
+local function classColor(slug)
+  local file = classFileFor[slug] or slug:upper()
+  local c = RAID_CLASS_COLORS and RAID_CLASS_COLORS[file]
   return c or { r = 0.9, g = 0.9, b = 0.9 }
 end
 
-local function classData(cls) return DB.classes and DB.classes[cls] end
+local function colorCode(slug)
+  local c = classColor(slug)
+  return string.format("|cff%02x%02x%02x", c.r * 255, c.g * 255, c.b * 255)
+end
 
-local function firstClass()
-  local _, myClass = UnitClass("player")           -- e.g. "DEATHKNIGHT"
-  for _, cls in ipairs(CLASS_ORDER) do
-    if cls:upper() == myClass and classData(cls) then return cls end
-  end
-  for _, cls in ipairs(CLASS_ORDER) do
-    if classData(cls) then return cls end
+-- Spec icons and class file names come from the game, matched up by name
+local function buildLookups()
+  local slugByFile = {}
+  for _, slug in ipairs(CLASS_ORDER) do slugByFile[slug:upper()] = slug end
+  local n = (GetNumClasses and GetNumClasses()) or 13
+  for i = 1, n do
+    local _, classFile, classID = GetClassInfo(i)
+    local slug = classFile and slugByFile[classFile]
+    if slug then
+      classFileFor[slug] = classFile
+      local count = (GetNumSpecializationsForClassID and GetNumSpecializationsForClassID(classID)) or 0
+      for s = 1, count do
+        local _, specName, _, icon = GetSpecializationInfoForClassID(classID, s)
+        if specName and icon then iconFor[slug .. "|" .. specName] = icon end
+      end
+    end
   end
 end
 
+local function buildSpecList()
+  specs, byKey = {}, {}
+  for _, slug in ipairs(CLASS_ORDER) do
+    local cd = DB.classes and DB.classes[slug]
+    if cd then
+      for _, sp in ipairs(cd.specs) do
+        local entry = {
+          key = slug .. "|" .. sp.spec, cls = slug, className = cd.className,
+          spec = sp.spec, role = sp.role, metric = sp.metric, players = sp.players,
+        }
+        specs[#specs + 1] = entry
+        byKey[entry.key] = entry
+      end
+    end
+  end
+end
+
+local function playerSpecKey()
+  local _, classFile = UnitClass("player")
+  local slug
+  for _, s in ipairs(CLASS_ORDER) do if s:upper() == classFile then slug = s end end
+  if not slug then return nil end
+  local idx = GetSpecialization and GetSpecialization()
+  if idx then
+    local _, specName = GetSpecializationInfo(idx)
+    if specName and byKey[slug .. "|" .. specName] then return slug .. "|" .. specName end
+  end
+  for _, e in ipairs(specs) do if e.cls == slug then return e.key end end
+end
+
+----------------------------------------------------------------------
+-- Formatting
+----------------------------------------------------------------------
 local function fmtAmount(v)
   if not v or v == 0 then return "-" end
   if v >= 1e6 then return string.format("%.2fM", v / 1e6) end
@@ -1318,84 +1365,9 @@ end
 
 local function comma(v)
   if not v or v == 0 then return "-" end
-  local s = tostring(math.floor(v))
-  local out = s:reverse():gsub("(%d%d%d)", "%1,"):reverse()
+  local out = tostring(math.floor(v)):reverse():gsub("(%d%d%d)", "%1,"):reverse()
   return (out:gsub("^,", ""))
 end
-
-----------------------------------------------------------------------
--- Copy window
-----------------------------------------------------------------------
-local copyFrame
-local function showCopy(text, label)
-  if not copyFrame then
-    local f = CreateFrame("Frame", "MythicStatsCopyFrame", UIParent, "BasicFrameTemplateWithInset")
-    f:SetSize(460, 150)
-    f:SetPoint("CENTER")
-    f:SetFrameStrata("DIALOG")
-    f:SetMovable(true); f:EnableMouse(true); f:RegisterForDrag("LeftButton")
-    f:SetScript("OnDragStart", f.StartMoving)
-    f:SetScript("OnDragStop", f.StopMovingOrSizing)
-    f.TitleText:SetText("Talent code")
-
-    f.info = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    f.info:SetPoint("TOPLEFT", 14, -32)
-    f.info:SetPoint("TOPRIGHT", -14, -32)
-    f.info:SetJustifyH("LEFT")
-
-    local box = CreateFrame("EditBox", nil, f, "InputBoxTemplate")
-    box:SetPoint("TOPLEFT", 18, -72)
-    box:SetPoint("TOPRIGHT", -18, -72)
-    box:SetHeight(24)
-    box:SetAutoFocus(false)
-    box:SetFontObject(ChatFontNormal)
-    box:SetScript("OnEscapePressed", function() f:Hide() end)
-    box:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
-    box:SetScript("OnTextChanged", function(self, user) if user then self:SetText(self.value or "") self:HighlightText() end end)
-    f.box = box
-
-    f.hint = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    f.hint:SetPoint("TOPLEFT", 18, -104)
-    f.hint:SetPoint("TOPRIGHT", -18, -104)
-    f.hint:SetJustifyH("LEFT")
-    f.hint:SetText("Press Ctrl+C to copy, then open your talents, click the loadout dropdown and choose Import.")
-    copyFrame = f
-  end
-  copyFrame.info:SetText(label or "")
-  copyFrame.box.value = text
-  copyFrame.box:SetText(text)
-  copyFrame:Show()
-  copyFrame.box:SetFocus()
-  copyFrame.box:HighlightText()
-end
-
-----------------------------------------------------------------------
--- Main window
-----------------------------------------------------------------------
-local main, specButtons, bossButtons, rows = nil, {}, {}, {}
-local ROW_H = 74
-
-local function currentSpecData()
-  local cd = classData(state.class)
-  if not cd then return nil end
-  for _, sp in ipairs(cd.specs) do
-    if sp.spec == state.spec then return sp end
-  end
-  return cd.specs[1]
-end
-
-local function playersFor(sp)
-  if not sp then return {} end
-  local bossName = DB.bosses[state.boss]
-  local out = {}
-  for _, p in ipairs(sp.players) do
-    if state.boss == 0 or p.boss == bossName then out[#out + 1] = p end
-  end
-  table.sort(out, function(a, b) return (a.amount or 0) > (b.amount or 0) end)
-  return out
-end
-
-local QUESTION = "Interface\\Icons\\INV_Misc_QuestionMark"
 
 local function itemIcon(id)
   if C_Item and C_Item.GetItemIconByID then
@@ -1422,7 +1394,57 @@ local function spellIcon(id)
   if GetSpellTexture then return GetSpellTexture(id) end
 end
 
--- One icon plus its name, used for trinkets and the potion
+----------------------------------------------------------------------
+-- Copy window
+----------------------------------------------------------------------
+local copyFrame
+local function showCopy(text, label)
+  if not copyFrame then
+    local f = CreateFrame("Frame", "MythicStatsCopyFrame", UIParent, "BasicFrameTemplateWithInset")
+    f:SetSize(470, 150)
+    f:SetPoint("CENTER")
+    f:SetFrameStrata("DIALOG")
+    f:SetMovable(true); f:EnableMouse(true); f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", f.StartMoving)
+    f:SetScript("OnDragStop", f.StopMovingOrSizing)
+    f.TitleText:SetText("Talent code")
+
+    f.info = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    f.info:SetPoint("TOPLEFT", 14, -32)
+    f.info:SetPoint("TOPRIGHT", -14, -32)
+    f.info:SetJustifyH("LEFT")
+
+    local box = CreateFrame("EditBox", nil, f, "InputBoxTemplate")
+    box:SetPoint("TOPLEFT", 18, -72)
+    box:SetPoint("TOPRIGHT", -18, -72)
+    box:SetHeight(24)
+    box:SetAutoFocus(false)
+    box:SetFontObject(ChatFontNormal)
+    box:SetScript("OnEscapePressed", function() f:Hide() end)
+    box:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
+    box:SetScript("OnTextChanged", function(self, user)
+      if user then self:SetText(self.value or ""); self:HighlightText() end
+    end)
+    f.box = box
+
+    f.hint = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    f.hint:SetPoint("TOPLEFT", 18, -104)
+    f.hint:SetPoint("TOPRIGHT", -18, -104)
+    f.hint:SetJustifyH("LEFT")
+    f.hint:SetText("Press Ctrl+C to copy, then open your talents, click the loadout dropdown and choose Import.")
+    copyFrame = f
+  end
+  copyFrame.info:SetText(label or "")
+  copyFrame.box.value = text
+  copyFrame.box:SetText(text)
+  copyFrame:Show()
+  copyFrame.box:SetFocus()
+  copyFrame.box:HighlightText()
+end
+
+----------------------------------------------------------------------
+-- Icon plus name, used for trinkets and potions
+----------------------------------------------------------------------
 local function makeSlot(parent, x, y, width)
   local f = CreateFrame("Button", nil, parent)
   f:SetSize(width, 18)
@@ -1440,16 +1462,13 @@ local function makeSlot(parent, x, y, width)
   f.text:SetPoint("RIGHT", 0, 0)
   f.text:SetJustifyH("LEFT")
   f:SetScript("OnEnter", function(self)
-    if not self.tipID then return end
+    if not self.tipID or self.tipID == 0 then return end
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    if self.tipKind == "spell" then
-      GameTooltip:SetSpellByID(self.tipID)
-    else
-      GameTooltip:SetItemByID(self.tipID)
-    end
+    if self.tipKind == "spell" then GameTooltip:SetSpellByID(self.tipID)
+    else GameTooltip:SetItemByID(self.tipID) end
     GameTooltip:Show()
   end)
-  f:SetScript("OnLeave", GameTooltip_Hide)
+  f:SetScript("OnLeave", function() GameTooltip:Hide() end)
   f:Hide()
   return f
 end
@@ -1457,7 +1476,7 @@ end
 local function fillItemSlot(slot, entry)
   if not entry or not entry.id or entry.id == 0 then slot:Hide() return end
   slot.icon:SetTexture(itemIcon(entry.id) or QUESTION)
-  local ilvl = entry.ilvl and entry.ilvl > 0 and ("  |cff9d9d9d" .. entry.ilvl .. "|r") or ""
+  local ilvl = (entry.ilvl and entry.ilvl > 0) and ("  |cff9d9d9d" .. entry.ilvl .. "|r") or ""
   slot.text:SetText(itemName(entry.id, entry.name) .. ilvl)
   slot.tipID, slot.tipKind = entry.id, "item"
   slot:Show()
@@ -1466,22 +1485,36 @@ end
 local function fillPotionSlot(slot, potion)
   if not potion or (not potion.name and not potion.id) then slot:Hide() return end
   slot.icon:SetTexture((potion.id and potion.id > 0 and spellIcon(potion.id)) or QUESTION)
-  slot.text:SetText("|cff8fd6ff" .. (potion.name ~= "" and potion.name or "Potion") .. "|r")
-  slot.tipID, slot.tipKind = potion.id, "spell"
+  slot.text:SetText("|cff8fd6ff" .. ((potion.name ~= "" and potion.name) or "Potion") .. "|r")
+  slot.tipID, slot.tipKind = potion.id or 0, "spell"
   slot:Show()
 end
 
+----------------------------------------------------------------------
+-- Content
+----------------------------------------------------------------------
+local function current() return state.key and byKey[state.key] end
+
+local function playersFor(sp)
+  if not sp then return {} end
+  local bossName = DB.bosses and DB.bosses[state.boss]
+  local out = {}
+  for _, p in ipairs(sp.players or {}) do
+    if state.boss == 0 or p.boss == bossName then out[#out + 1] = p end
+  end
+  table.sort(out, function(a, b) return (a.amount or 0) > (b.amount or 0) end)
+  return out
+end
+
 local function updateRows()
-  local sp = currentSpecData()
+  local sp = current()
   local players = playersFor(sp)
   for i, row in ipairs(rows) do
     local p = players[i]
-    if p then
-      local col = classColor(state.class)
-      row.name:SetText(string.format("|cff%02x%02x%02x%s|r  |cff9d9d9d%s|r",
-        col.r * 255, col.g * 255, col.b * 255, p.name, p.guild or ""))
+    if p and sp then
       row.rank:SetText("#" .. i)
-      row.top:SetText(string.format("%s %s   ilvl %.1f   %s",
+      row.name:SetText(colorCode(sp.cls) .. p.name .. "|r  |cff9d9d9d" .. (p.guild or "") .. "|r")
+      row.top:SetText(string.format("%s %s   ilvl %.1f   |cff9d9d9d%s|r",
         fmtAmount(p.amount), sp.metric or "DPS", p.ilvl or 0, p.boss or ""))
       if p.crit then
         row.stats:SetText(string.format(
@@ -1495,7 +1528,7 @@ local function updateRows()
       fillPotionSlot(row.pot, p.potion)
       row.copy:SetShown(p.talents and p.talents ~= "")
       row.copy.code = p.talents
-      row.copy.label = string.format("%s %s, #%d on %s", sp.spec, state.class, i, p.boss or "")
+      row.copy.label = string.format("%s %s, rank %d on %s", sp.spec, sp.className, i, p.boss or "")
       row:Show()
     else
       row:Hide()
@@ -1503,45 +1536,59 @@ local function updateRows()
   end
   if main then
     main.empty:SetShown(#players == 0)
-    main.TitleText:SetText(string.format("Mythic Stat Sheet - %s", DB.zone or ""))
-    main.sub:SetText(string.format("%s %s, top 10 %s   |cff808080Updated %s|r",
-      state.spec or "", state.class or "", state.boss == 0 and "across all bosses"
-      or ("on " .. (DB.bosses[state.boss] or "")), DB.updated or "?"))
-  end
-end
-
-local function buildSpecButtons()
-  for _, b in ipairs(specButtons) do b:Hide() end
-  local cd = classData(state.class)
-  if not cd then return end
-  for i, sp in ipairs(cd.specs) do
-    local b = specButtons[i]
-    if not b then
-      b = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
-      b:SetSize(124, 22)
-      b:SetPoint("TOPLEFT", 14, -78 - (i - 1) * 25)
-      specButtons[i] = b
+    main.TitleText:SetText("Mythic Stat Sheet - " .. (DB.zone or ""))
+    if sp then
+      main.sub:SetText(string.format("%s%s %s|r   top 10 %s   |cff808080updated %s|r",
+        colorCode(sp.cls), sp.spec, sp.className,
+        state.boss == 0 and "across all bosses" or ("on " .. ((DB.bosses or {})[state.boss] or "")),
+        DB.updated or "?"))
     end
-    b:SetText(sp.spec)
-    b:SetScript("OnClick", function() state.spec = sp.spec; updateRows(); buildSpecButtons() end)
-    b:SetEnabled(sp.spec ~= state.spec)
-    b:Show()
   end
 end
 
-local function cycleClass(step)
-  local idx = 1
-  for i, c in ipairs(CLASS_ORDER) do if c == state.class then idx = i end end
-  for _ = 1, #CLASS_ORDER do
-    idx = idx + step
-    if idx < 1 then idx = #CLASS_ORDER elseif idx > #CLASS_ORDER then idx = 1 end
-    if classData(CLASS_ORDER[idx]) then break end
+local function updateSide()
+  for _, b in ipairs(sideButtons) do
+    b.sel:SetShown(b.key == state.key)
   end
-  state.class = CLASS_ORDER[idx]
-  local cd = classData(state.class)
-  state.spec = cd and cd.specs[1] and cd.specs[1].spec
-  buildSpecButtons(); updateRows()
-  main.className:SetText(cd and cd.className or state.class)
+end
+
+local function select(key)
+  state.key = key
+  updateSide(); updateRows()
+end
+
+local function buildSide(parent)
+  for i, e in ipairs(specs) do
+    local b = CreateFrame("Button", nil, parent)
+    b:SetSize(SIDE_W - 22, SIDE_ROW)
+    b:SetPoint("TOPLEFT", 0, -(i - 1) * SIDE_ROW)
+    b.key = e.key
+
+    b.sel = b:CreateTexture(nil, "BACKGROUND")
+    b.sel:SetAllPoints()
+    b.sel:SetColorTexture(1, 1, 1, 0.1)
+    b.sel:Hide()
+    b:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+
+    b.icon = b:CreateTexture(nil, "ARTWORK")
+    b.icon:SetSize(24, 24)
+    b.icon:SetPoint("LEFT", 4, 0)
+    b.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    b.icon:SetTexture(iconFor[e.key] or QUESTION)
+
+    b.spec = b:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    b.spec:SetPoint("TOPLEFT", b.icon, "TOPRIGHT", 7, 1)
+    b.spec:SetText(e.spec)
+    local c = classColor(e.cls)
+    b.spec:SetTextColor(c.r, c.g, c.b)
+
+    b.class = b:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    b.class:SetPoint("TOPLEFT", b.spec, "BOTTOMLEFT", 0, -1)
+    b.class:SetText(e.className)
+
+    b:SetScript("OnClick", function(self) select(self.key) end)
+    sideButtons[#sideButtons + 1] = b
+  end
 end
 
 local function buildBossButtons()
@@ -1551,8 +1598,9 @@ local function buildBossButtons()
     local b = bossButtons[i]
     if not b then
       b = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
-      b:SetSize(150, 20)
-      b:SetPoint("TOPLEFT", 150, -78 - (i - 1) * 22)
+      b:SetSize(136, 20)
+      local col, line = (i - 1) % 5, math.floor((i - 1) / 5)
+      b:SetPoint("TOPLEFT", SIDE_W + 16 + col * 140, -54 - line * 23)
       bossButtons[i] = b
     end
     b:SetText(n)
@@ -1564,72 +1612,64 @@ end
 
 local function createMain()
   local f = CreateFrame("Frame", "MythicStatsFrame", UIParent, "BasicFrameTemplateWithInset")
-  f:SetSize(960, 860)
+  f:SetSize(1000, 880)
   f:SetPoint("CENTER")
   f:SetMovable(true); f:EnableMouse(true); f:RegisterForDrag("LeftButton")
   f:SetScript("OnDragStart", f.StartMoving)
   f:SetScript("OnDragStop", f.StopMovingOrSizing)
-  f:SetScript("OnShow", function() updateRows() end)
-  tinsert(UISpecialFrames, "MythicStatsFrame")   -- Escape closes it
+  tinsert(UISpecialFrames, "MythicStatsFrame")
   main = f
 
   f.sub = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  f.sub:SetPoint("TOPLEFT", 14, -32)
+  f.sub:SetPoint("TOPLEFT", SIDE_W + 16, -34)
   f.sub:SetJustifyH("LEFT")
 
-  local prev = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  prev:SetSize(24, 22); prev:SetPoint("TOPLEFT", 14, -52); prev:SetText("<")
-  prev:SetScript("OnClick", function() cycleClass(-1) end)
-
-  local nxt = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  nxt:SetSize(24, 22); nxt:SetPoint("TOPLEFT", 114, -52); nxt:SetText(">")
-  nxt:SetScript("OnClick", function() cycleClass(1) end)
-
-  f.className = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  f.className:SetPoint("LEFT", prev, "RIGHT", 4, 0)
-  f.className:SetPoint("RIGHT", nxt, "LEFT", -4, 0)
-  f.className:SetJustifyH("CENTER")
-
-  local bossLabel = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  bossLabel:SetPoint("TOPLEFT", 150, -56)
-  bossLabel:SetText("Boss")
+  -- Scrolling list of every spec
+  local scroll = CreateFrame("ScrollFrame", "MythicStatsSideScroll", f, "UIPanelScrollFrameTemplate")
+  scroll:SetPoint("TOPLEFT", 12, -34)
+  scroll:SetSize(SIDE_W - 6, 808)
+  local child = CreateFrame("Frame", nil, scroll)
+  child:SetSize(SIDE_W - 22, math.max(1, #specs * SIDE_ROW))
+  scroll:SetScrollChild(child)
+  buildSide(child)
 
   f.empty = f:CreateFontString(nil, "OVERLAY", "GameFontDisable")
-  f.empty:SetPoint("CENTER", 150, 0)
+  f.empty:SetPoint("CENTER", SIDE_W / 2, 0)
   f.empty:SetText("No rankings for this spec on this boss.")
 
+  local top = -104
   for i = 1, 10 do
     local row = CreateFrame("Frame", nil, f)
-    row:SetSize(620, ROW_H)
-    row:SetPoint("TOPLEFT", 310, -76 - (i - 1) * (ROW_H + 4))
+    row:SetSize(750, ROW_H)
+    row:SetPoint("TOPLEFT", SIDE_W + 16, top - (i - 1) * (ROW_H + 3))
 
     row.bg = row:CreateTexture(nil, "BACKGROUND")
     row.bg:SetAllPoints()
     row.bg:SetColorTexture(1, 1, 1, i % 2 == 0 and 0.03 or 0.06)
 
     row.rank = row:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    row.rank:SetPoint("TOPLEFT", 6, -4)
-    row.rank:SetWidth(34)
+    row.rank:SetPoint("TOPLEFT", 6, -5)
+    row.rank:SetWidth(36)
 
     row.name = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    row.name:SetPoint("TOPLEFT", 44, -4)
+    row.name:SetPoint("TOPLEFT", 46, -5)
     row.name:SetJustifyH("LEFT")
 
     row.top = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    row.top:SetPoint("TOPRIGHT", -96, -4)
+    row.top:SetPoint("TOPRIGHT", -104, -5)
     row.top:SetJustifyH("RIGHT")
 
     row.stats = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    row.stats:SetPoint("TOPLEFT", 44, -21)
+    row.stats:SetPoint("TOPLEFT", 46, -23)
     row.stats:SetJustifyH("LEFT")
 
-    row.t1 = makeSlot(row, 44, -34, 200)
-    row.t2 = makeSlot(row, 250, -34, 200)
-    row.pot = makeSlot(row, 44, -54, 200)
+    row.t1 = makeSlot(row, 46, -38, 230)
+    row.t2 = makeSlot(row, 286, -38, 230)
+    row.pot = makeSlot(row, 46, -56, 300)
 
     row.copy = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-    row.copy:SetSize(88, 22)
-    row.copy:SetPoint("TOPRIGHT", -4, -12)
+    row.copy:SetSize(92, 22)
+    row.copy:SetPoint("TOPRIGHT", -6, -26)
     row.copy:SetText("Talents")
     row.copy:SetScript("OnClick", function(self) showCopy(self.code, self.label) end)
 
@@ -1638,20 +1678,37 @@ local function createMain()
   f:Hide()
 end
 
+----------------------------------------------------------------------
+-- Open, close, and following your spec
+----------------------------------------------------------------------
+local function scrollToSelected()
+  for i, b in ipairs(sideButtons) do
+    if b.key == state.key and MythicStatsSideScroll then
+      MythicStatsSideScroll:SetVerticalScroll(math.max(0, (i - 4) * SIDE_ROW))
+      return
+    end
+  end
+end
+
 local function toggle()
   if not DB.classes then
     print("|cff3fc7ebMythicStats|r: no data found. Download a newer copy of the addon.")
     return
   end
   if not main then
-    createMain()
-    state.class = state.class or firstClass()
-    local cd = classData(state.class)
-    state.spec = cd and cd.specs[1] and cd.specs[1].spec
-    main.className:SetText(cd and cd.className or state.class or "")
-    buildSpecButtons(); buildBossButtons()
+    buildLookups(); buildSpecList()
+    createMain(); buildBossButtons()
+    state.key = playerSpecKey() or (specs[1] and specs[1].key)
+    select(state.key)
   end
-  if main:IsShown() then main:Hide() else main:Show() end
+  if main:IsShown() then
+    main:Hide()
+  else
+    state.key = playerSpecKey() or state.key   -- follow the spec you're in now
+    select(state.key)
+    main:Show()
+    scrollToSelected()
+  end
 end
 
 SLASH_MYTHICSTATS1 = "/mythicstats"
@@ -1660,9 +1717,15 @@ SlashCmdList["MYTHICSTATS"] = toggle
 
 local loader = CreateFrame("Frame")
 loader:RegisterEvent("PLAYER_LOGIN")
-loader:SetScript("OnEvent", function()
-  print("|cff3fc7ebMythicStats|r loaded. Type |cffffff00/ms|r for the top 10 per spec. Data from "
-    .. (DB.updated or "?") .. ".")
+loader:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+loader:SetScript("OnEvent", function(_, event, unit)
+  if event == "PLAYER_LOGIN" then
+    print("|cff3fc7ebMythicStats|r loaded. Type |cffffff00/ms|r for the top 10 per spec. Data from "
+      .. (DB.updated or "?") .. ".")
+  elseif unit == "player" and main and main:IsShown() then
+    local key = playerSpecKey()
+    if key then select(key); scrollToSelected() end
+  end
 end)
 """
 
