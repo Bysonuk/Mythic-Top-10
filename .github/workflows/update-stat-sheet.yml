@@ -2,10 +2,10 @@ name: Update stat sheet
 
 on:
   schedule:
-    # Hourly: each run spends that hour's API allowance, then publishes.
-    # Once the raid is fully loaded you can switch to the daily line below.
-    - cron: "5 * * * *"
-    # - cron: "0 6 * * *"    # 06:00 UTC daily (07:00 UK in summer, 06:00 in winter)
+    # Daily at midnight UTC (1am UK in summer, midnight in winter).
+    # For catching up on a new raid, swap this for the hourly line below.
+    - cron: "0 0 * * *"
+    # - cron: "5 * * * *"    # hourly: each run spends that hour's allowance, then publishes
   workflow_dispatch:          # lets you run it by hand from the Actions tab
 
 permissions:
@@ -20,7 +20,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 50       # must finish before the next run starts
+    timeout-minutes: 350      # GitHub's own limit is 360
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
@@ -55,8 +55,7 @@ jobs:
         run: |
           python wcl_mythic_stats.py --all --no-open \
             --out site/index.html \
-            --deadline 40 \
-            --stop-at-limit \
+            --deadline 320 \
             --rank-age 20 \
             --prune \
             --addon build/MythicStats \
