@@ -60,7 +60,7 @@ jobs:
             --rank-age 20 \
             --prune \
             --addon build/MythicStats \
-            --interface 120105
+            --interface 120100,120105
 
       - name: Save the updated cache and page
         run: |
@@ -102,7 +102,7 @@ jobs:
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CF_PROJECT_ID: ${{ secrets.CF_PROJECT_ID }}
         run: |
-          python cf_upload.py site/MythicStats.zip --interface 120105,120000
+          python cf_upload.py site/MythicStats.zip --interface 120100,120105
           git add -A .cf_last_upload || true
           if ! git diff --staged --quiet; then
             git commit -m "CurseForge upload marker [skip ci]"
