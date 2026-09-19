@@ -71,14 +71,46 @@ def get(path, **params):
 # --------------------------------------------------------------------------- #
 
 def current_season(expansion):
+    """The live season slug, and the dungeons actually being run in it.
+
+    The expansion's static data lists every dungeon the expansion has, which is
+    wider than the current rotation, so the dungeon list comes from the season's
+    own entry when it has one, and otherwise from the leaderboard itself.
+    """
     d = get("/mythic-plus/static-data", expansion_id=expansion)
     seasons = [s for s in (d.get("seasons") or []) if s.get("slug")]
-    dungeons = [{"slug": x["slug"], "name": x.get("name", x["slug"]),
-                 "short": x.get("short_name", "")} for x in (d.get("dungeons") or [])]
+    if not seasons:
+        raise RuntimeError(f"No seasons for expansion {expansion}")
     # Side seasons ("break-the-meta", "cutoffs", "remix") aren't the live ladder
     main = [s for s in seasons if s["slug"].count("-") <= 2]
-    season = (main or seasons)[0]["slug"]
-    return season, dungeons
+    chosen = (main or seasons)[0]
+    season = chosen["slug"]
+
+    def clean(lst):
+        return [{"slug": x["slug"], "name": x.get("name", x["slug"]),
+                 "short": x.get("short_name", "")} for x in lst if x.get("slug")]
+
+    dungeons = clean(chosen.get("dungeons") or [])
+    if dungeons:
+        return season, dungeons
+    return season, dungeons_in_play(season)
+
+
+def dungeons_in_play(season, region="world", pages=8, want=8):
+    """Read the top runs and see which dungeons this season actually uses."""
+    found = {}
+    for page in range(pages):
+        if len(found) >= want and page >= 4:
+            break
+        d = get("/mythic-plus/runs", season=season, region=region,
+                dungeon="all", affixes="all", page=page)
+        for r in d.get("rankings") or []:
+            dg = (r.get("run") or {}).get("dungeon") or {}
+            if dg.get("slug") and dg["slug"] not in found:
+                found[dg["slug"]] = {"slug": dg["slug"], "name": dg.get("name", dg["slug"]),
+                                     "short": dg.get("short_name", "")}
+        time.sleep(0.35)
+    return sorted(found.values(), key=lambda x: x["name"])
 
 
 def players(run):
@@ -123,7 +155,14 @@ def build(args):
         season_found, dungeons = current_season(args.expansion)
         season = season or season_found
     log(f"Season {season}, region {args.region}")
+    if dungeons:
+        log(f"Dungeons in rotation: {', '.join(d['name'] for d in dungeons)}")
 
+    if args.dungeons:
+        wanted = [x.strip() for x in args.dungeons.split(",") if x.strip()]
+        known = {d["slug"]: d for d in dungeons}
+        dungeons = [known.get(w, {"slug": w, "name": w.replace("-", " ").title(), "short": ""})
+                    for w in wanted]
     if args.dungeon:
         dungeons = [d for d in dungeons if d["slug"] == args.dungeon] or \
                    [{"slug": args.dungeon, "name": args.dungeon, "short": ""}]
@@ -237,6 +276,7 @@ def build(args):
 def probe(args):
     season, dungeons = current_season(args.expansion)
     log(f"Season: {season}")
+    log("Dungeons being run this season:")
     for d in dungeons:
         log(f"  {d['slug']}  ({d['name']})")
     d = get("/mythic-plus/runs", season=args.season or season, region=args.region,
@@ -302,8 +342,7 @@ h1{font-size:clamp(1.7rem,3vw,2.4rem);font-weight:700;letter-spacing:-.03em;marg
 .pill{background:var(--glass-2);border:1px solid var(--stroke);border-radius:999px;padding:.1rem .6rem;color:var(--ink)}
 .theme{width:2rem;height:2rem;border-radius:50%;border:1px solid var(--stroke);background:var(--glass-2);cursor:pointer;flex:0 0 auto}
 
-nav{display:flex;gap:.25rem;overflow-x:auto;margin-top:1.2rem;scrollbar-width:none;padding-bottom:.2rem}
-nav::-webkit-scrollbar{display:none}
+nav{display:flex;flex-wrap:wrap;gap:.3rem;margin-top:1.2rem;padding-bottom:.2rem}
 nav button{flex:0 0 auto;border:1px solid transparent;background:transparent;border-radius:999px;padding:.3rem .85rem;
   color:var(--dim);cursor:pointer;font-size:.86rem;white-space:nowrap}
 nav button:hover{background:var(--hover);color:var(--ink)}
@@ -517,6 +556,7 @@ def main():
     ap.add_argument("--season", help="season slug, e.g. season-mn-2")
     ap.add_argument("--expansion", type=int, default=11, help="expansion ID (default 11)")
     ap.add_argument("--dungeon", help="one dungeon slug only")
+    ap.add_argument("--dungeons", help="comma-separated slugs, if the automatic list is wrong")
     ap.add_argument("--region", default="world", help="world, us, eu, kr, tw")
     ap.add_argument("--pages", type=int, default=5, help="pages per dungeon, 20 runs each")
     ap.add_argument("--out", default="site/mplus.html", help="where to write the page")
