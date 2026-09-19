@@ -383,6 +383,27 @@ tr.spec:hover td{background:var(--hover)}
 .comp .n{font-size:1.05rem;font-weight:640;color:var(--accent);min-width:2.6rem}
 .comp .who{display:flex;flex-wrap:wrap;gap:.3rem}
 .comp .who span{background:var(--track);border-radius:999px;padding:.1rem .55rem;font-size:.8rem}
+.fb-btn{position:fixed;right:clamp(12px,2vw,26px);bottom:clamp(12px,2vw,26px);z-index:30;
+  border:1px solid var(--stroke);background:var(--glass-2);-webkit-backdrop-filter:saturate(180%) blur(22px);
+  backdrop-filter:saturate(180%) blur(22px);box-shadow:var(--shadow);border-radius:999px;
+  padding:.5rem 1rem;cursor:pointer;font-size:.86rem;font-weight:550}
+dialog{border:1px solid var(--stroke);border-radius:var(--r);padding:0;color:var(--ink);background:var(--glass-2);
+  -webkit-backdrop-filter:saturate(180%) blur(28px);backdrop-filter:saturate(180%) blur(28px);
+  box-shadow:var(--shadow);width:min(30rem,92vw)}
+dialog::backdrop{background:rgba(0,0,0,.35)}
+.fb{padding:1.1rem 1.2rem;display:grid;gap:.7rem}
+.fb h3{margin:0;font-size:1.05rem;font-weight:620}
+.fb p{margin:0;color:var(--dim);font-size:.82rem}
+.fb .kinds{display:flex;flex-wrap:wrap;gap:.35rem}
+.fb .kinds button{border:1px solid var(--stroke);background:transparent;border-radius:999px;padding:.25rem .75rem;
+  cursor:pointer;font-size:.82rem;color:var(--dim)}
+.fb .kinds button[aria-pressed="true"]{background:var(--glass);color:var(--ink);font-weight:550}
+.fb textarea{width:100%;min-height:7rem;resize:vertical;border:1px solid var(--stroke);border-radius:var(--r-sm);
+  background:var(--glass);padding:.6rem .7rem;font:inherit;font-size:.88rem;color:var(--ink)}
+.fb .row{display:flex;justify-content:space-between;align-items:center;gap:.6rem}
+.fb .go{border:0;background:var(--ink);color:var(--bg);border-radius:999px;padding:.4rem 1.1rem;cursor:pointer;font-weight:600;font-size:.86rem}
+.fb .go[disabled]{opacity:.45;cursor:default}
+.fb .cancel{border:0;background:none;color:var(--dim);cursor:pointer;font-size:.84rem}
 footer{margin-top:2.4rem;color:var(--faint);font-size:.78rem}
 footer a{color:var(--dim)}
 </style>
@@ -423,6 +444,23 @@ footer a{color:var(--dim)}
     Top keys are pushed by a small group of players, so read this as what's fashionable at the top, not as a rule.
   </footer>
 </div>
+<button class="fb-btn" id="fbOpen">Feedback</button>
+<dialog id="fbDialog">
+  <form class="fb" method="dialog">
+    <h3>Send feedback</h3>
+    <p>This opens a pre-filled issue on GitHub, where you click Submit. A free GitHub account is needed.</p>
+    <div class="kinds" id="fbKinds">
+      <button type="button" data-k="Bug" aria-pressed="true">Something's broken</button>
+      <button type="button" data-k="Data" aria-pressed="false">Data looks wrong</button>
+      <button type="button" data-k="Idea" aria-pressed="false">Idea</button>
+    </div>
+    <textarea id="fbText" placeholder="What happened, or what would you like to see?"></textarea>
+    <div class="row">
+      <button type="button" class="cancel" id="fbCancel">Cancel</button>
+      <button type="button" class="go" id="fbGo" disabled>Open on GitHub</button>
+    </div>
+  </form>
+</dialog>
 <script>
 const DATA = /*__DATA__*/null;
 const $ = s => document.querySelector(s);
@@ -516,7 +554,32 @@ function render(){
     </div>`).join("") : `<div class="small">Nothing here yet.</div>`;
 }
 
+const REPO = "Bysonuk/Mythic-Top-10";
+function initFeedback(){
+  const dlg = $("#fbDialog"), text = $("#fbText"), go = $("#fbGo");
+  let kind = "Bug";
+  $("#fbOpen").addEventListener("click", () => dlg.showModal());
+  $("#fbCancel").addEventListener("click", () => dlg.close());
+  $("#fbKinds").addEventListener("click", e => {
+    const b = e.target.closest("button"); if(!b) return;
+    kind = b.dataset.k;
+    document.querySelectorAll("#fbKinds button").forEach(x => x.setAttribute("aria-pressed", x === b));
+  });
+  text.addEventListener("input", () => { go.disabled = text.value.trim().length < 5; });
+  go.addEventListener("click", () => {
+    const title = "[" + kind + "] " + text.value.trim().split("\n")[0].slice(0, 70);
+    const body = [text.value.trim(), "", "---", "Page: Mythic+ comps",
+      "Dungeon: " + state.dungeon, "Season: " + (DATA ? DATA.season : "?"),
+      "Generated: " + (DATA ? DATA.generated : "?"), "Browser: " + navigator.userAgent].join("\n");
+    window.open("https://github.com/" + REPO + "/issues/new?title=" + encodeURIComponent(title)
+      + "&body=" + encodeURIComponent(body) + "&labels=" + encodeURIComponent(kind.toLowerCase()),
+      "_blank", "noopener");
+    dlg.close(); text.value = ""; go.disabled = true;
+  });
+}
+
 function init(){
+  initFeedback();
   try{ state.theme = localStorage.getItem("mplus-theme") || "auto"; }catch(e){}
   applyTheme();
   $("#theme").addEventListener("click", () => {
