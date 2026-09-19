@@ -148,6 +148,25 @@ def fetch_dungeon(season, dungeon, pages, region):
 # Working out the meta
 # --------------------------------------------------------------------------- #
 
+def hero_lookup():
+    """Returns a function code -> hero tree, or one that always gives None."""
+    try:
+        import talents
+        index = talents.load_index(os.path.join(HERE, "wcl_cache"))
+    except Exception as e:
+        log(f"  Hero trees unavailable ({e}).")
+        return lambda code: None
+    seen = {}
+
+    def look(code):
+        if not code:
+            return None
+        if code not in seen:
+            seen[code] = talents.hero_tree(code, os.path.join(HERE, "wcl_cache"), index)
+        return seen[code]
+    return look
+
+
 def build(args):
     season = args.season
     dungeons = []
@@ -190,6 +209,7 @@ def build(args):
     def summarise(runs):
         presence, pairs, levels = Counter(), defaultdict(Counter), defaultdict(list)
         comps, builds, roles = Counter(), defaultdict(Counter), {}
+        heroes, hero_meta = defaultdict(Counter), {}
         counted = 0
         for r in runs:
             ps = players(r)
@@ -208,17 +228,22 @@ def build(args):
                         levels[key].append(int(lvl))
                 if p["loadout"]:
                     builds[key][p["loadout"]] += 1
+                    h = look_hero(p["loadout"])
+                    if h and h.get("name"):
+                        heroes[key][h["name"]] += 1
+                        hero_meta[h["name"]] = h.get("icon", "")
             for a in seen:
                 for b in seen:
                     if a != b:
                         pairs[a][b] += 1
             comp = tuple(sorted(seen, key=lambda k: (ROLE_ORDER.get(roles.get(k, "dps"), 2), k)))
             comps[comp] += 1
-        return presence, pairs, levels, comps, builds, roles, counted
+        return presence, pairs, levels, comps, builds, roles, counted, heroes, hero_meta
 
-    presence, pairs, levels, comps, builds, roles, counted = summarise(all_runs)
+    look_hero = hero_lookup()
+    presence, pairs, levels, comps, builds, roles, counted, heroes, hero_meta = summarise(all_runs)
 
-    def spec_rows(presence, total, pairs, levels, builds, roles):
+    def spec_rows(presence, total, pairs, levels, builds, roles, heroes=None, hero_meta=None):
         rows = []
         for key, n in presence.most_common():
             lv = sorted(levels[key])
@@ -233,7 +258,10 @@ def build(args):
                 "high": lv[-1] if lv else None,
                 "median": lv[len(lv) // 2] if lv else None,
                 "with": [[w, c] for w, c in pairs[key].most_common(5)],
-                "builds": [{"code": c, "n": k} for c, k in builds[key].most_common(3)],
+                "builds": [{"code": c, "n": k, "hero": (look_hero(c) or {}).get("name", "")}
+                           for c, k in builds[key].most_common(3)],
+                "heroes": [{"name": h, "n": k, "icon": (hero_meta or {}).get(h, "")}
+                           for h, k in (heroes or {}).get(key, Counter()).most_common(3)],
             })
         return rows
 
@@ -243,17 +271,17 @@ def build(args):
         "generated": datetime.now(timezone.utc).isoformat(),
         "runs": counted,
         "affixes": [a for a, _ in affixes.most_common(4)],
-        "specs": spec_rows(presence, counted, pairs, levels, builds, roles),
+        "specs": spec_rows(presence, counted, pairs, levels, builds, roles, heroes, hero_meta),
         "comps": [{"specs": list(c), "n": n, "share": n / counted if counted else 0}
                   for c, n in comps.most_common(12)],
         "dungeons": [],
     }
     for dg, runs in per_dungeon:
-        p, pr, lv, cp, bl, rl, cnt = summarise(runs)
+        p, pr, lv, cp, bl, rl, cnt, hs, hm = summarise(runs)
         data["dungeons"].append({
             "slug": dg["slug"], "name": dg["name"], "short": dg.get("short", ""),
             "runs": cnt,
-            "specs": spec_rows(p, cnt, pr, lv, bl, rl),
+            "specs": spec_rows(p, cnt, pr, lv, bl, rl, hs, hm),
             "comps": [{"specs": list(c), "n": n, "share": n / cnt if cnt else 0}
                       for c, n in cp.most_common(6)],
         })
@@ -383,6 +411,8 @@ tr.spec:hover td{background:var(--hover)}
 .comp .n{font-size:1.05rem;font-weight:640;color:var(--accent);min-width:2.6rem}
 .comp .who{display:flex;flex-wrap:wrap;gap:.3rem}
 .comp .who span{background:var(--track);border-radius:999px;padding:.1rem .55rem;font-size:.8rem}
+.hero{display:inline-flex;align-items:center;gap:.25rem;background:var(--track);border-radius:999px;padding:.05rem .5rem;font-size:.74rem;margin-right:.2rem}
+.hicon{border-radius:3px}
 .fb-btn{position:fixed;right:clamp(12px,2vw,26px);bottom:clamp(12px,2vw,26px);z-index:30;
   border:1px solid var(--stroke);background:var(--glass-2);-webkit-backdrop-filter:saturate(180%) blur(22px);
   backdrop-filter:saturate(180%) blur(22px);box-shadow:var(--shadow);border-radius:999px;
@@ -525,13 +555,13 @@ function render(){
   $("#specTitle").textContent = state.dungeon === "all"
     ? `Specs across ${v.runs} top runs` : `Specs in ${v.runs} top runs here`;
   $("#specs").innerHTML =
-    `<thead><tr><th>Spec</th><th>In runs</th><th></th><th>Key level</th><th>Brought with</th></tr></thead><tbody>` +
+    `<thead><tr><th>Spec</th><th>In runs</th><th></th><th>Key level</th><th>Hero talents</th><th>Brought with</th></tr></thead><tbody>` +
     (specs.length ? specs.map(s => {
       const lvl = s.low == null ? "\u2013" : (s.low === s.high ? s.low : `${s.low}\u2013${s.high}`);
       const open = state.open === s.name;
       const builds = s.builds.length
         ? s.builds.map(b => `<div class="build">
-             <code title="${esc(b.code)}">${esc(b.code)}</code>
+             <code title="${esc(b.code)}">${b.hero ? esc(b.hero) + " \u00b7 " : ""}${esc(b.code)}</code>
              <span class="small num">${b.n} run${b.n > 1 ? "s" : ""}</span>
              <button class="copy" data-code="${esc(b.code)}">Copy</button></div>`).join("")
         : `<div class="small">No talent strings in these runs.</div>`;
@@ -540,11 +570,12 @@ function render(){
           <td class="num">${(s.share*100).toFixed(0)}%</td>
           <td><span class="bar"><i style="width:${(s.share/top*100).toFixed(1)}%"></i></span></td>
           <td class="num">${lvl}${s.median != null ? ` <span class="small">med ${s.median}</span>` : ""}</td>
+          <td>${(s.heroes && s.heroes.length) ? s.heroes.map(h => `<span class="hero">${h.icon ? `<img class="hicon" src="https://wow.zamimg.com/images/wow/icons/medium/${esc(h.icon)}.jpg" width="14" height="14" alt="" onerror="this.remove()">` : ""}${esc(h.name)} ${h.n}</span>`).join(" ") : "\u2013"}</td>
           <td>${s.with.map(w => esc(w[0])).slice(0,3).join(", ") || "\u2013"}</td>
-        </tr>` + (open ? `<tr class="detail"><td colspan="5">
+        </tr>` + (open ? `<tr class="detail"><td colspan="6">
           <div class="small">Most used talent builds, from the runs above.</div>
           <div class="builds">${builds}</div></td></tr>` : "");
-    }).join("") : `<tr><td colspan="5">Nothing here yet.</td></tr>`) + `</tbody>`;
+    }).join("") : `<tr><td colspan="6">Nothing here yet.</td></tr>`) + `</tbody>`;
 
   $("#comps").innerHTML = v.comps.length ? v.comps.map(c => `
     <div class="comp">

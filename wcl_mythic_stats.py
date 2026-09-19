@@ -396,7 +396,7 @@ def find_actor(fight, name):
     return None
 
 
-def fetch_stats(api, chunk):
+def fetch_stats(api, chunk, names_by_fight=None):
     parts = []
     for n, (code, fid) in enumerate(chunk):
         parts.append(f'f{n}: report(code: "{code}") {{ '
@@ -417,7 +417,8 @@ def fetch_stats(api, chunk):
             continue  # private or deleted log; try again next run
         players = ((rep.get("masterData") or {}).get("actors")) or []
         events = ((rep.get("events") or {}).get("data")) or []
-        cache_put("fights", f"{key[0]}|{key[1]}", compact_fight(players, events))
+        keep = (names_by_fight or {}).get(key)
+        cache_put("fights", f"{key[0]}|{key[1]}", compact_fight(players, events, keep))
 
 
 def fetch_talents(api, wanted):
@@ -573,6 +574,11 @@ def process_fights(api, fights, names_by_fight, on_batch=None):
         fight = load_fight(key[0], key[1])
         if fight is None:
             return True
+        if fight.get("v", 2) < 3:
+            for nm in names_by_fight.get(key, ()):
+                a = find_actor(fight, nm)
+                if a and a.get("stats") and not a.get("gear"):
+                    return True   # cached before gear was kept
         for kind, on in (("talents", api.talents_ok), ("potions", api.potions_ok)):
             if not on:
                 continue
@@ -596,7 +602,7 @@ def process_fights(api, fights, names_by_fight, on_batch=None):
         chunk = todo[i:i + FIGHTS_PER_QUERY]
         new = [k for k in chunk if load_fight(k[0], k[1]) is None]
         if new:
-            fetch_stats(api, new)
+            fetch_stats(api, new, names_by_fight)
         pot_ids = potion_ids(api, todo) if api.potions_ok else []
         for kind, fetch in (("talents", fetch_talents), ("potions", fetch_potions)):
             if kind == "talents" and not api.talents_ok:
@@ -629,29 +635,58 @@ def process_fights(api, fights, names_by_fight, on_batch=None):
             on_batch()
 
 
-def compact_fight(players, events):
-    """Keep only what the page needs, so the cache stays small."""
+SLOT_NAMES = ["Head", "Neck", "Shoulder", "Shirt", "Chest", "Waist", "Legs", "Feet", "Wrist",
+              "Hands", "Ring 1", "Ring 2", "Trinket 1", "Trinket 2", "Back", "Main hand", "Off hand"]
+
+
+def gear_list(gear):
+    """[slot, id, ilvl, enchant, [gem ids], icon] per item, which is small enough to cache."""
+    out = []
+    for pos, g in enumerate(gear or []):
+        if not g.get("id"):
+            continue
+        try:
+            slot = int(g.get("slot", pos))
+        except (TypeError, ValueError):
+            slot = pos
+        gems = [int(x["id"]) for x in (g.get("gems") or []) if x.get("id")]
+        out.append([slot, int(g["id"]), round(num(g.get("itemLevel"))),
+                    int(g.get("permanentEnchant") or 0), gems, g.get("icon") or ""])
+    return out
+
+
+def compact_fight(players, events, keep=None):
+    """Keep only what the page needs, so the cache stays small.
+
+    Gear is bulky, so it's kept only for players who are in someone's top 10.
+    """
+    keep = {str(n).lower() for n in (keep or [])}
     by_id = {}
     for pl in players or []:
         if pl.get("id") is None:
             continue
         by_id[int(pl["id"])] = {"id": int(pl["id"]), "name": pl.get("name", ""),
-                                "stats": None, "trinkets": []}
+                                "stats": None, "trinkets": [], "gear": None}
         ci = pl.get("combatantInfo") or {}
         if ci:
             gear = ci.get("gear") or []
             if gear:
                 by_id[int(pl["id"])]["stats"] = stats_from_details(ci)
                 by_id[int(pl["id"])]["trinkets"] = trinkets_from_gear(gear)
+                if not keep or str(pl.get("name", "")).lower() in keep:
+                    by_id[int(pl["id"])]["gear"] = gear_list(gear)
     for ev in events or []:
         sid = ev.get("sourceID")
         if sid is None:
             continue
-        p = by_id.setdefault(int(sid), {"id": int(sid), "name": "", "stats": None, "trinkets": []})
+        p = by_id.setdefault(int(sid), {"id": int(sid), "name": "", "stats": None,
+                                        "trinkets": [], "gear": None})
         if ev.get("gear"):
             p["stats"] = stats_from_event(ev)
             p["trinkets"] = trinkets_from_gear(ev["gear"])
-    return {"v": 2, "p": list(by_id.values())}
+            if not keep or str(p.get("name", "")).lower() in keep:
+                p["gear"] = gear_list(ev["gear"])
+    return {"v": 3, "p": list(by_id.values())}
 
 
 def load_fight(code, fid):
@@ -659,7 +694,7 @@ def load_fight(code, fid):
     c = cache_get("fights", f"{code}|{fid}")
     if c is None:
         return None
-    if c.get("v") == 2:
+    if c.get("v") in (2, 3):
         return c
     c = compact_fight(c.get("players"), c.get("events"))
     cache_put("fights", f"{code}|{fid}", c)
@@ -747,6 +782,7 @@ def build_player(rank_entry, idx, fight, item_names):
         "loaded": bool(fight),
         "talents": None,
         "potion": None,
+        "gear": None,
     }
     if not fight:
         return p
@@ -766,6 +802,10 @@ def build_player(rank_entry, idx, fight, item_names):
 
     if detail:
         p["stats"] = detail.get("stats")
+        gear = detail.get("gear")
+        if gear:
+            p["gear"] = [{"slot": g[0], "id": g[1], "ilvl": g[2], "enchant": g[3],
+                          "gems": g[4], "icon": g[5] if len(g) > 5 else ""} for g in gear]
         p["trinkets"] = [dict(t) for t in detail.get("trinkets") or []]
         for t in p["trinkets"]:
             if t.get("id") and t.get("name"):
@@ -947,6 +987,33 @@ def prune_cache(zone, specs, region):
     log(f"Removed {removed} saved logs that have dropped out of the top 10.")
 
 
+def add_hero_trees(result):
+    """Read each player's hero talent tree out of their loadout string."""
+    try:
+        import talents
+    except ImportError:
+        return
+    try:
+        index = talents.load_index(CACHE_DIR)
+    except Exception as e:
+        log(f"  Couldn't load the talent data for hero trees ({e}).")
+        return
+    seen = {}
+    found = 0
+    for b in result["bosses"]:
+        for sp in b["specs"]:
+            for p in sp["players"]:
+                code = p.get("talents")
+                if not code:
+                    continue
+                if code not in seen:
+                    seen[code] = talents.hero_tree(code, CACHE_DIR, index)
+                p["hero"] = seen[code]
+                found += 1 if seen[code] else 0
+    if found:
+        log(f"  Hero trees read for {found} players.")
+
+
 def build_from_cache(zone, specs, bosses, region, api=None, addon=False):
     """Build the page using only saved data. Bosses with no saved rankings are left out."""
     item_names = {int(k): v for k, v in (cache_get("items", "names") or {}).items()}
@@ -1004,6 +1071,7 @@ def build_from_cache(zone, specs, bosses, region, api=None, addon=False):
                 if isinstance(p.get("potion"), dict) and p["potion"].get("id"):
                     p["potion"]["name"] = (p["potion"].get("name")
                                            or spell_names.get(p["potion"]["id"], ""))
+    add_hero_trees(result)
     result["progress"] = {"loaded": loaded, "total": total, "talents": tal_loaded}
     if ADDON_DIR:
         result["addon"] = "MythicStats.zip"
@@ -1423,10 +1491,15 @@ def write_addon(data, addon_dir, interface):
                     "trinkets": [{"id": t["id"], "name": t.get("name") or "",
                                   "ilvl": round(t.get("ilvl") or 0)}
                                  for t in p.get("trinkets") or []],
+                    "gear": p.get("gear") or None,
                     "potion": (p.get("potion") or None) and
                               {"id": (p["potion"] or {}).get("id") or 0,
                                "name": (p["potion"] or {}).get("name") or ""},
                     "talents": p.get("talents") or "",
+                    "hero": (p.get("hero") or None) and
+                            {"name": (p["hero"] or {}).get("name") or "",
+                             "atlas": (p["hero"] or {}).get("atlas") or "",
+                             "icon": (p["hero"] or {}).get("icon") or ""},
                 })
     files = ["data\\_info.lua"]
     for cls, c in sorted(classes.items()):
@@ -1476,7 +1549,7 @@ local CLASS_ORDER = {
   "Paladin", "Priest", "Rogue", "Shaman", "Warlock", "Warrior",
 }
 local QUESTION = "Interface\\Icons\\INV_Misc_QuestionMark"
-local ROW_H, SIDE_W, SIDE_ROW = 62, 210, 32
+local ROW_H, SIDE_W, SIDE_ROW = 88, 210, 32
 local SIDE_PAD = 30            -- room for the scroll bar down the right of the list
 
 local state = { key = nil, boss = 1 }
@@ -1684,6 +1757,80 @@ local function fillItemSlot(slot, entry)
   slot:Show()
 end
 
+local SLOT_NAMES = {[0]="Head","Neck","Shoulder","Shirt","Chest","Waist","Legs","Feet","Wrist",
+  "Hands","Ring 1","Ring 2","Trinket 1","Trinket 2","Back","Main hand","Off hand"}
+
+local function makeGearCell(parent, x, y, size)
+  local f = CreateFrame("Button", nil, parent)
+  f:SetSize(size, size)
+  f:SetPoint("TOPLEFT", x, y)
+  f.icon = f:CreateTexture(nil, "ARTWORK")
+  f.icon:SetAllPoints()
+  f.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+  f.border = f:CreateTexture(nil, "BACKGROUND")
+  f.border:SetPoint("TOPLEFT", -1, 1)
+  f.border:SetPoint("BOTTOMRIGHT", 1, -1)
+  f.border:SetColorTexture(0, 0, 0, 0.85)
+  f.ilvl = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  f.ilvl:SetPoint("BOTTOM", 0, -1)
+  f.ilvl:SetTextColor(1, 1, 1)
+  f.gem = f:CreateTexture(nil, "OVERLAY")
+  f.gem:SetSize(5, 5); f.gem:SetPoint("TOPRIGHT", -1, -1)
+  f.gem:SetColorTexture(0.76, 0.51, 0.99)
+  f.ench = f:CreateTexture(nil, "OVERLAY")
+  f.ench:SetSize(5, 5); f.ench:SetPoint("TOPLEFT", 1, -1)
+  f.ench:SetColorTexture(0.29, 0.87, 0.5)
+  f:SetScript("OnEnter", function(self)
+    if not self.itemID then return end
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:SetItemByID(self.itemID)
+    if self.slotName then GameTooltip:AddLine(self.slotName, 0.6, 0.6, 0.6) end
+    if self.gemCount and self.gemCount > 0 then
+      GameTooltip:AddLine(self.gemCount .. " gem" .. (self.gemCount > 1 and "s" or ""), 0.76, 0.51, 0.99)
+    end
+    if self.enchanted then GameTooltip:AddLine("Enchanted", 0.29, 0.87, 0.5) end
+    GameTooltip:Show()
+  end)
+  f:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  f:Hide()
+  return f
+end
+
+local function fillGear(row, gear)
+  local shown = 0
+  if gear then
+    for _, g in ipairs(gear) do
+      if g.slot ~= 3 and g.slot ~= 17 and g.id and g.id > 0 and shown < #row.gear then
+        shown = shown + 1
+        local cell = row.gear[shown]
+        cell.icon:SetTexture(itemIcon(g.id) or QUESTION)
+        cell.ilvl:SetText(g.ilvl and g.ilvl > 0 and g.ilvl or "")
+        cell.itemID, cell.slotName = g.id, SLOT_NAMES[g.slot]
+        cell.gemCount = g.gems and #g.gems or 0
+        cell.enchanted = (g.enchant or 0) > 0
+        cell.gem:SetShown(cell.gemCount > 0)
+        cell.ench:SetShown(cell.enchanted)
+        cell:Show()
+      end
+    end
+  end
+  for i = shown + 1, #row.gear do row.gear[i]:Hide() end
+end
+
+local function fillHeroSlot(slot, hero)
+  if not hero or not hero.name or hero.name == "" then slot:Hide() return end
+  if hero.atlas and hero.atlas ~= "" and slot.icon.SetAtlas then
+    slot.icon:SetAtlas(hero.atlas)
+    slot.icon:SetTexCoord(0, 1, 0, 1)
+  else
+    slot.icon:SetTexture(hero.icon and hero.icon ~= "" and ("Interface\\Icons\\" .. hero.icon) or QUESTION)
+    slot.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+  end
+  slot.text:SetText("|cffc9a14a" .. hero.name .. "|r")
+  slot.tipID = nil
+  slot:Show()
+end
+
 local function fillPotionSlot(slot, potion, loaded)
   local name = potion and potion.name
   if (not name or name == "") and potion and potion.id and potion.id > 0 then
@@ -1738,6 +1885,8 @@ local function updateRows()
       fillItemSlot(row.t1, p.trinkets and p.trinkets[1])
       fillItemSlot(row.t2, p.trinkets and p.trinkets[2])
       fillPotionSlot(row.pot, p.potion, p.potion ~= nil)
+      fillHeroSlot(row.hero, p.hero)
+      fillGear(row, p.gear)
       row.copy:SetShown(p.talents and p.talents ~= "")
       row.copy.code = p.talents
       row.copy.label = string.format("%s %s, rank %d on %s", sp.spec, sp.className, i, p.boss or "")
@@ -1830,7 +1979,7 @@ end
 
 local function createMain()
   local f = CreateFrame("Frame", "MythicStatsFrame", UIParent, "BasicFrameTemplateWithInset")
-  f:SetSize(1000, 700)   -- height is worked out below, once the boss rows are known
+  f:SetSize(1120, 700)   -- height is worked out below, once the boss rows are known
   f:SetPoint("CENTER")
   f:SetMovable(true); f:EnableMouse(true); f:RegisterForDrag("LeftButton")
   f:SetScript("OnDragStart", f.StartMoving)
@@ -1860,11 +2009,11 @@ local function createMain()
 
   local top = BOSS_TOP - bossLines() * BOSS_H - 10
   local height = math.abs(top) + 10 * (ROW_H + 3) + 22
-  f:SetSize(1000, height)
+  f:SetSize(1120, height)
   scroll:SetSize(SIDE_W - SIDE_PAD, height - 46)
   for i = 1, 10 do
     local row = CreateFrame("Frame", nil, f)
-    row:SetSize(750, ROW_H)
+    row:SetSize(870, ROW_H)
     row:SetPoint("TOPLEFT", SIDE_W + 26, top - (i - 1) * (ROW_H + 3))
 
     row.bg = row:CreateTexture(nil, "BACKGROUND")
@@ -1890,10 +2039,16 @@ local function createMain()
     row.t1 = makeSlot(row, 46, -40, 210)
     row.t2 = makeSlot(row, 262, -40, 210)
     row.pot = makeSlot(row, 478, -40, 180)
+    row.hero = makeSlot(row, 46, -58, 220)
+
+    row.gear = {}
+    for g = 1, 16 do
+      row.gear[g] = makeGearCell(row, 286 + (g - 1) * 25, -56, 22)
+    end
 
     row.copy = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
     row.copy:SetSize(92, 22)
-    row.copy:SetPoint("TOPRIGHT", -6, -22)
+    row.copy:SetPoint("TOPRIGHT", -6, -28)
     row.copy:SetText("Talents")
     row.copy:SetScript("OnClick", function(self) showCopy(self.code, self.label) end)
 
@@ -2135,6 +2290,21 @@ dialog::backdrop{background:rgba(0,0,0,.35);backdrop-filter:blur(3px)}
 }
 .spec-btn:hover{background:var(--hover)}
 .spec-btn[aria-current="true"]{background:color-mix(in srgb, var(--cc) 16%, transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--cc) 40%, transparent)}
+/* Gear strip */
+.gear{display:flex;flex-wrap:wrap;gap:.25rem;border-top:1px solid var(--stroke);padding-top:.55rem}
+.gear .g{position:relative;width:2rem;height:2rem;border-radius:7px;overflow:hidden;text-decoration:none;
+  background:var(--track);box-shadow:0 0 0 1px var(--stroke);display:block}
+.gear .g img{width:100%;height:100%;display:block;object-fit:cover}
+.gear .g .noicon{display:grid;place-items:center;width:100%;height:100%;font-size:.6rem;color:var(--faint)}
+.gear .g b{position:absolute;left:0;right:0;bottom:0;text-align:center;font-size:.58rem;font-weight:700;
+  color:#fff;background:rgba(0,0,0,.6);line-height:1.25}
+.gear .g .gem{position:absolute;top:2px;right:2px;width:5px;height:5px;border-radius:1px;transform:rotate(45deg);background:#c084fc}
+.gear .g .ench{position:absolute;top:2px;left:2px;width:5px;height:5px;border-radius:50%;background:#4ade80}
+.gear-note{font-size:.72rem;color:var(--faint);display:flex;gap:.7rem;flex-wrap:wrap;margin-top:.3rem}
+.gear-note i{display:inline-block;width:5px;height:5px;margin-right:.25rem}
+.hicon{border-radius:4px;vertical-align:-.22em;margin-right:.3rem}
+.hero{display:inline-flex;align-items:center;background:var(--track);border-radius:999px;padding:.05rem .5rem;font-size:.76rem;color:var(--ink)}
+.hero .hicon{margin-right:.3rem}
 .sicon{border-radius:5px;vertical-align:-.28em;margin-right:.45rem;box-shadow:0 0 0 1px var(--stroke)}
 .heat .sicon{vertical-align:-.3em;margin-right:.5rem}
 .hero .sicon{border-radius:10px;box-shadow:0 0 0 1px var(--stroke), var(--shadow)}
@@ -2382,6 +2552,32 @@ const SPEC_ICONS = {
   "Warrior|Arms":"ability_warrior_savageblow","Warrior|Fury":"ability_warrior_innerrage",
   "Warrior|Protection":"ability_warrior_defensivestance"
 };
+const SLOT_NAMES = ["Head","Neck","Shoulder","Shirt","Chest","Waist","Legs","Feet","Wrist",
+  "Hands","Ring 1","Ring 2","Trinket 1","Trinket 2","Back","Main hand","Off hand"];
+function gearStrip(gear){
+  if(!gear || !gear.length) return "";
+  const items = gear.filter(g => g.slot !== 3 && g.slot !== 17).sort((a,b)=>a.slot-b.slot);
+  return `<div class="gear">${items.map(g=>{
+    const img = g.icon
+      ? `<img src="https://wow.zamimg.com/images/wow/icons/medium/${esc(g.icon)}.jpg" alt="" loading="lazy" onerror="this.remove()">`
+      : `<span class="noicon">${esc((SLOT_NAMES[g.slot]||"?").slice(0,2))}</span>`;
+    const marks = (g.gems && g.gems.length ? `<i class="gem" title="${g.gems.length} gem${g.gems.length>1?"s":""}"></i>` : "")
+      + (g.enchant ? `<i class="ench" title="Enchanted"></i>` : "");
+    return `<a class="g" href="https://www.wowhead.com/item=${g.id}" target="_blank" rel="noopener"
+      data-wowhead="item=${g.id}&ilvl=${g.ilvl}${g.gems && g.gems.length ? "&gems=" + g.gems.join(":") : ""}"
+      title="${esc(SLOT_NAMES[g.slot] || "")}">${img}<b>${g.ilvl || ""}</b>${marks}</a>`;
+  }).join("")}</div>`;
+}
+function heroIcon(hero, size){
+  if(!hero || !hero.icon) return "";
+  const px = size || 16;
+  return `<img class="hicon" src="https://wow.zamimg.com/images/wow/icons/medium/${esc(hero.icon)}.jpg"
+    alt="" width="${px}" height="${px}" loading="lazy" onerror="this.remove()">`;
+}
+function heroTag(hero){
+  if(!hero || !hero.name) return "";
+  return `<span class="hero">${heroIcon(hero, 15)}${esc(hero.name)}</span>`;
+}
 function specIcon(cls, spec, size){
   const slug = SPEC_ICONS[cls + "|" + spec];
   if(!slug) return "";
@@ -2641,11 +2837,12 @@ function card(p, s, allBosses, maxShare){
   return `<article class="card glass ${p.rank===1?"first":""}">
     <div class="c-top">
       <span class="rank num">${p.rank}</span>
-      <div class="nm2"><b>${esc(p.name)}</b><small>${esc([p.guild, p.server && (p.server+(p.region?" ("+p.region+")":""))].filter(Boolean).join(", ")) || "&nbsp;"}</small></div>
+      <div class="nm2"><b>${esc(p.name)}</b><small>${p.hero && p.hero.name ? esc(p.hero.name) + " · " : ""}${esc([p.guild, p.server && (p.server+(p.region?" ("+p.region+")":""))].filter(Boolean).join(", ")) || "&nbsp;"}</small></div>
       <div class="out"><b class="num">${fmtAmt(p.amount)}</b><small>${s.metric}, ilvl ${p.ilvl?p.ilvl.toFixed(1):"–"}</small></div>
     </div>
     ${statBlock}
     <div class="c-tk">${tks}${pot}</div>
+    ${gearStrip(p.gear)}
     <div class="c-tal"><span class="h">Talents</span>${
       p.talents ? talentBox(p.talents)
       : `<div class="pending">${p.talents === "" ? "No talent code in this log" : "Not loaded yet"}</div>`}</div>
@@ -2684,6 +2881,7 @@ function renderSpec(s){
   const buildsHtml = builds.length ? builds.slice(0,6).map((b,i)=>`
     <div class="build">
       <div class="build-top"><b>${i===0 && b.players.length>1 ? "Most used" : `Build ${i+1}`}</b>
+        ${heroTag(b.players[0].hero)}
         <span class="share"><i style="width:${b.players.length/withTal*100}%"></i></span>
         <span class="num" style="color:var(--dim);font-size:.8rem">${b.players.length} of ${withTal}</span></div>
       ${talentBox(b.code)}
@@ -2697,6 +2895,17 @@ function renderSpec(s){
       <span class="bar"><i style="width:${t.n/tkMax*100}%"></i></span></div>`).join("")
     : `<div class="pending">No trinkets loaded for this spec yet.</div>`;
 
+  const heroCounts = new Map();
+  for(const p of s.players){
+    if(p.hero && p.hero.name){
+      const c = heroCounts.get(p.hero.name) || {name:p.hero.name, icon:p.hero.icon, n:0};
+      c.n++; heroCounts.set(p.hero.name, c);
+    }
+  }
+  const heroes = [...heroCounts.values()].sort((a,b)=>b.n-a.n);
+  const heroesHtml = heroes.length ? heroes.map(x=>`<div class="tk-row">
+      <span class="nm">${heroIcon(x, 16)}${esc(x.name)}</span><span class="ct num">${x.n}</span>
+      <span class="bar"><i style="width:${x.n/heroes[0].n*100}%"></i></span></div>`).join("") : "";
   const potCounts = new Map();
   for(const p of s.players){
     const nm = p.potion && (p.potion.name || (p.potion.id ? "Potion " + p.potion.id : ""));
@@ -2725,6 +2934,7 @@ function renderSpec(s){
         <section class="panel glass"><h3>Secondary stat ranges<small>Dots are players, the line is the average</small></h3>${ranges}</section>
         <section class="panel glass"><h3>Trinkets used<small>Across the top ${sum.withTk || sum.n}</small></h3>${trinkets}
           ${potsHtml ? `<h3 style="margin-top:1rem">Combat potions</h3>${potsHtml}` : ""}</section>
+        ${heroesHtml ? `<section class="panel glass"><h3>Hero talents<small>What the top ${sum.n} are playing</small></h3>${heroesHtml}</section>` : ""}
         <section class="panel glass"><h3>Talent builds<small>${withTal ? `${builds.length} across ${withTal} players` : ""}</small></h3>${buildsHtml}</section>
       </div>
       <div class="players-head"><h3>${allBosses ? "Top players by boss" : "Top 10 players"}</h3>
