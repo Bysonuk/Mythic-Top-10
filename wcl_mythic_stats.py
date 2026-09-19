@@ -1670,6 +1670,204 @@ local function spellIcon(id)
 end
 
 ----------------------------------------------------------------------
+-- Reading talent loadout strings, and comparing them to your own
+----------------------------------------------------------------------
+local B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+local B64IDX = {}
+for i = 1, #B64 do B64IDX[B64:sub(i, i)] = i - 1 end
+
+local function bitReader(code)
+  local pos = 0
+  return function(n)
+    local v = 0
+    for i = 0, n - 1 do
+      local ch = math.floor(pos / 6) + 1
+      local c = code:sub(ch, ch)
+      local idx = B64IDX[c]
+      if not idx then return nil end
+      local bit = math.floor(idx / (2 ^ (pos % 6))) % 2
+      v = v + bit * (2 ^ i)
+      pos = pos + 1
+    end
+    return v
+  end
+end
+
+-- Blizzard's export format: version, spec, tree hash, then a run of bits per node.
+local function decodeLoadout(code)
+  if not code or code == "" then return nil end
+  local read = bitReader(code)
+  local version = read(8)
+  local specID = read(16)
+  if not version or not specID then return nil end
+  for _ = 1, 16 do if not read(8) then return nil end end
+
+  local configID = C_ClassTalents and C_ClassTalents.GetActiveConfigID and C_ClassTalents.GetActiveConfigID()
+  if not configID or not C_Traits then return nil end
+  local cfg = C_Traits.GetConfigInfo(configID)
+  local treeID = cfg and cfg.treeIDs and cfg.treeIDs[1]
+  if not treeID then return nil end
+
+  local out, order = {}, C_Traits.GetTreeNodes(treeID)
+  for _, nodeID in ipairs(order) do
+    local selected = read(1)
+    if selected == nil then break end
+    if selected == 1 then
+      local purchased = version >= 2 and read(1) or 1
+      if purchased == 1 then
+        local partial = read(1)
+        local ranks
+        if partial == 1 then ranks = read(6) end
+        local isChoice = read(1)
+        local choice
+        if isChoice == 1 then choice = read(2) end
+        if not ranks then
+          -- the string leaves the rank out when a talent is fully ranked
+          local info = C_Traits.GetNodeInfo(configID, nodeID)
+          ranks = info and info.maxRanks or 1
+        end
+        out[nodeID] = { rank = ranks, choice = choice }
+      end
+    end
+  end
+  return out, specID, configID
+end
+
+-- What you currently have selected, in the same shape
+local function currentLoadout()
+  local configID = C_ClassTalents and C_ClassTalents.GetActiveConfigID and C_ClassTalents.GetActiveConfigID()
+  if not configID or not C_Traits then return nil end
+  local cfg = C_Traits.GetConfigInfo(configID)
+  local treeID = cfg and cfg.treeIDs and cfg.treeIDs[1]
+  if not treeID then return nil end
+  local out = {}
+  for _, nodeID in ipairs(C_Traits.GetTreeNodes(treeID)) do
+    local info = C_Traits.GetNodeInfo(configID, nodeID)
+    if info and (info.ranksPurchased or 0) > 0 then
+      local choice
+      if info.activeEntry and info.entryIDs then
+        for i, id in ipairs(info.entryIDs) do
+          if id == info.activeEntry.entryID then choice = i - 1 end
+        end
+      end
+      out[nodeID] = { rank = info.ranksPurchased, choice = choice }
+    end
+  end
+  return out, configID
+end
+
+-- Name and icon for a node, picking the chosen entry where there is one
+local function nodeLabel(configID, nodeID, choice)
+  local info = C_Traits.GetNodeInfo(configID, nodeID)
+  if not info or not info.entryIDs then return nil end
+  local entryID = info.entryIDs[(choice or 0) + 1] or info.entryIDs[1]
+  local entry = entryID and C_Traits.GetEntryInfo(configID, entryID)
+  local def = entry and entry.definitionID and C_Traits.GetDefinitionInfo(entry.definitionID)
+  if not def then return nil end
+  local name = def.overrideName
+  local icon = def.overrideIcon
+  if def.spellID then
+    if C_Spell and C_Spell.GetSpellInfo then
+      local si = C_Spell.GetSpellInfo(def.spellID)
+      name = name or (si and si.name)
+      icon = icon or (si and si.iconID)
+    end
+  end
+  return name, icon
+end
+
+local function sameChoice(a, b)
+  if (a.choice or 0) ~= (b.choice or 0) then return false end
+  if a.rank and b.rank then return a.rank == b.rank end
+  return true
+end
+
+-- Differences between a build and your own talents
+local function diffLoadout(code)
+  local theirs, specID, configID = decodeLoadout(code)
+  if not theirs then return nil end
+  local mine = currentLoadout()
+  if not mine then return nil end
+  local onlyTheirs, onlyMine = {}, {}
+  for nodeID, t in pairs(theirs) do
+    local m = mine[nodeID]
+    if not m or not sameChoice(t, m) then
+      local name, icon = nodeLabel(configID, nodeID, t.choice)
+      if name then onlyTheirs[#onlyTheirs + 1] = { name = name, icon = icon } end
+    end
+  end
+  for nodeID, m in pairs(mine) do
+    local t = theirs[nodeID]
+    if not t or not sameChoice(t, m) then
+      local name, icon = nodeLabel(configID, nodeID, m.choice)
+      if name then onlyMine[#onlyMine + 1] = { name = name, icon = icon } end
+    end
+  end
+  table.sort(onlyTheirs, function(a, b) return a.name < b.name end)
+  table.sort(onlyMine, function(a, b) return a.name < b.name end)
+  return onlyTheirs, onlyMine, specID
+end
+
+-- Exposed so the comparison can be checked from outside, and reused by other addons
+MythicStatsTalentDiff = function(code) return diffLoadout(code) end
+
+local function iconText(icon)
+  return icon and ("|T" .. icon .. ":14:14:0:0:64:64:5:59:5:59|t ") or ""
+end
+
+local function showTalentTooltip(button)
+  local p = button.player
+  if not p or not p.talents or p.talents == "" then return end
+  GameTooltip:SetOwner(button, "ANCHOR_LEFT")
+  GameTooltip:AddLine(button.label or "Talent build", 1, 1, 1)
+  if p.hero and p.hero.name and p.hero.name ~= "" then
+    GameTooltip:AddLine("Hero talents: " .. p.hero.name, 0.79, 0.63, 0.29)
+  end
+
+  local ok, onlyTheirs, onlyMine, specID = pcall(diffLoadout, p.talents)
+  if not ok or not onlyTheirs then
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine("Click to copy, then import it in your talent window.", 0.6, 0.6, 0.6)
+    GameTooltip:Show()
+    return
+  end
+
+  local mySpec = GetSpecialization and GetSpecializationInfo and GetSpecializationInfo(GetSpecialization())
+  if specID and mySpec and specID ~= mySpec then
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine("This is a different spec to the one you're in,", 0.6, 0.6, 0.6)
+    GameTooltip:AddLine("so it can't be compared with your talents.", 0.6, 0.6, 0.6)
+    GameTooltip:Show()
+    return
+  end
+
+  if #onlyTheirs == 0 and #onlyMine == 0 then
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine("Identical to your current talents.", 0.4, 0.9, 0.5)
+  else
+    if #onlyTheirs > 0 then
+      GameTooltip:AddLine(" ")
+      GameTooltip:AddLine("They take, you don't:", 0.4, 0.9, 0.5)
+      for i = 1, math.min(#onlyTheirs, 12) do
+        GameTooltip:AddLine(iconText(onlyTheirs[i].icon) .. onlyTheirs[i].name, 0.75, 0.95, 0.8)
+      end
+      if #onlyTheirs > 12 then GameTooltip:AddLine("...and " .. (#onlyTheirs - 12) .. " more", 0.5, 0.5, 0.5) end
+    end
+    if #onlyMine > 0 then
+      GameTooltip:AddLine(" ")
+      GameTooltip:AddLine("You take, they don't:", 0.95, 0.45, 0.4)
+      for i = 1, math.min(#onlyMine, 12) do
+        GameTooltip:AddLine(iconText(onlyMine[i].icon) .. onlyMine[i].name, 0.98, 0.8, 0.78)
+      end
+      if #onlyMine > 12 then GameTooltip:AddLine("...and " .. (#onlyMine - 12) .. " more", 0.5, 0.5, 0.5) end
+    end
+  end
+  GameTooltip:AddLine(" ")
+  GameTooltip:AddLine("Click to copy the build.", 0.6, 0.6, 0.6)
+  GameTooltip:Show()
+end
+
+----------------------------------------------------------------------
 -- Copy window
 ----------------------------------------------------------------------
 local copyFrame
@@ -1889,6 +2087,7 @@ local function updateRows()
       fillGear(row, p.gear)
       row.copy:SetShown(p.talents and p.talents ~= "")
       row.copy.code = p.talents
+      row.copy.player = p
       row.copy.label = string.format("%s %s, rank %d on %s", sp.spec, sp.className, i, p.boss or "")
       row:Show()
     else
@@ -2051,6 +2250,8 @@ local function createMain()
     row.copy:SetPoint("TOPRIGHT", -6, -28)
     row.copy:SetText("Talents")
     row.copy:SetScript("OnClick", function(self) showCopy(self.code, self.label) end)
+    row.copy:SetScript("OnEnter", function(self) showTalentTooltip(self) end)
+    row.copy:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     rows[i] = row
   end
@@ -2304,9 +2505,9 @@ dialog::backdrop{background:rgba(0,0,0,.35);backdrop-filter:blur(3px)}
 .gear-note i{display:inline-block;width:5px;height:5px;margin-right:.25rem}
 .hicon{width:14px;height:14px;min-width:14px;flex:0 0 14px;object-fit:cover;border-radius:3px;
   vertical-align:-.18em;margin-right:.3rem;display:inline-block}
-.hero{display:inline-flex;align-items:center;gap:.28rem;background:var(--track);border-radius:999px;
-  padding:0 .5rem;height:1.15rem;line-height:1.15rem;font-size:.74rem;color:var(--ink);white-space:nowrap}
-.hero .hicon{margin:0}
+.htag{display:inline-flex;align-items:center;gap:.3rem;height:1.15rem;line-height:1.15rem;
+  font-size:.78rem;color:var(--dim);white-space:nowrap}
+.htag .hicon{margin:0}
 .tk-row .nm .hicon{width:14px;height:14px}
 .build-top{min-height:0}
 .sicon{border-radius:5px;vertical-align:-.28em;margin-right:.45rem;box-shadow:0 0 0 1px var(--stroke)}
@@ -2442,10 +2643,9 @@ main{overflow-y:auto;min-height:0;container-type:inline-size;container-name:main
 .pending{color:var(--faint);font-size:.82rem;padding:.3rem 0}
 .build{padding:.5rem 0;border-bottom:1px solid var(--stroke);display:grid;gap:.3rem}
 .build:last-child{border-bottom:0}
-.build-top{display:flex;justify-content:space-between;align-items:baseline;gap:.7rem;font-size:.86rem}
+.build-top{display:flex;align-items:center;gap:.6rem;font-size:.86rem}
 .build-top b{font-weight:600}
-.build-top .share{height:4px;flex:1;max-width:38%;border-radius:2px;background:var(--track);overflow:hidden;align-self:center}
-.build-top .share i{display:block;height:100%;background:var(--cc)}
+.build-top .count{margin-left:auto;color:var(--dim);font-size:.8rem}
 .build small{color:var(--faint);font-size:.74rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 @media (max-width:780px){
@@ -2581,7 +2781,7 @@ function heroIcon(hero, size){
 }
 function heroTag(hero){
   if(!hero || !hero.name) return "";
-  return `<span class="hero">${heroIcon(hero, 15)}${esc(hero.name)}</span>`;
+  return `<span class="htag">${heroIcon(hero, 14)}${esc(hero.name)}</span>`;
 }
 function specIcon(cls, spec, size){
   const slug = SPEC_ICONS[cls + "|" + spec];
@@ -2887,8 +3087,7 @@ function renderSpec(s){
     <div class="build">
       <div class="build-top"><b>${i===0 && b.players.length>1 ? "Most used" : `Build ${i+1}`}</b>
         ${heroTag(b.players[0].hero)}
-        <span class="share"><i style="width:${b.players.length/withTal*100}%"></i></span>
-        <span class="num" style="color:var(--dim);font-size:.8rem">${b.players.length} of ${withTal}</span></div>
+        <span class="num count">${b.players.length} of ${withTal}</span></div>
       ${talentBox(b.code)}
       <small>${b.players.sort((x,y)=>x.rank-y.rank).map(p=>`#${p.rank} ${esc(p.name)}`).join(", ")}</small>
     </div>`).join("") + (builds.length>6?`<div class="pending">${builds.length-6} more on the cards below.</div>`:"")
