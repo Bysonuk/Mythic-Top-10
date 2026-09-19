@@ -2103,6 +2103,10 @@ button,select,input{font:inherit;color:inherit}
 }
 .spec-btn:hover{background:var(--hover)}
 .spec-btn[aria-current="true"]{background:color-mix(in srgb, var(--cc) 16%, transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--cc) 40%, transparent)}
+.sicon{border-radius:5px;vertical-align:-.28em;margin-right:.45rem;box-shadow:0 0 0 1px var(--stroke)}
+.heat .sicon{vertical-align:-.3em;margin-right:.5rem}
+.hero .sicon{border-radius:10px;box-shadow:0 0 0 1px var(--stroke), var(--shadow)}
+.hero-name{display:flex;align-items:center;gap:.7rem}
 .spec-btn .dot{width:.45rem;height:.45rem;border-radius:50%;background:var(--cc);display:inline-block;margin-right:.45rem;vertical-align:.04rem}
 .spec-btn .mini{display:flex;width:clamp(34px,3vw,56px);height:5px;border-radius:3px;overflow:hidden;background:var(--track)}
 .spec-btn .mini span{height:100%}
@@ -2130,8 +2134,8 @@ main{overflow-y:auto;min-height:0;container-type:inline-size;container-name:main
 .heat th .sw{display:inline-block;width:.5rem;height:.5rem;border-radius:2px;margin-right:.35rem}
 .heat tr{cursor:pointer}
 .heat td{padding:0 .7rem;height:2.7rem;background:var(--glass);border-top:1px solid var(--stroke);border-bottom:1px solid var(--stroke);white-space:nowrap;transition:background .15s}
-.heat td:first-child{border-left:1px solid var(--stroke);border-radius:var(--r-sm) 0 0 var(--r-sm);position:relative;padding-left:1rem}
-.heat td:first-child::before{content:"";position:absolute;left:.45rem;top:50%;transform:translateY(-50%);width:.4rem;height:.4rem;border-radius:50%;background:var(--cc)}
+.heat td:first-child{border-radius:var(--r-sm) 0 0 var(--r-sm)}
+.heat td:first-child{padding-left:.7rem;border-left:3px solid var(--cc)}
 .heat td:last-child{border-right:1px solid var(--stroke);border-radius:0 var(--r-sm) var(--r-sm) 0}
 .heat tbody tr:hover td{background:var(--glass-2)}
 .heat .sp b{font-weight:600;font-size:.94rem;margin-right:.4rem}
@@ -2302,6 +2306,40 @@ const CLASS_COLORS_DARK = {
   Rogue:"#FFF468", Shaman:"#4E9BF5", Warlock:"#9A9BFF", Warrior:"#C69B6D"
 };
 const ROLE_NAMES = {tank:"Tank", healer:"Healer", dps:"Damage"};
+const SPEC_ICONS = {
+  "DeathKnight|Blood":"spell_deathknight_bloodpresence","DeathKnight|Frost":"spell_deathknight_frostpresence",
+  "DeathKnight|Unholy":"spell_deathknight_unholypresence",
+  "DemonHunter|Havoc":"ability_demonhunter_specdps","DemonHunter|Vengeance":"ability_demonhunter_spectank",
+  "Druid|Balance":"spell_nature_starfall","Druid|Feral":"ability_druid_catform",
+  "Druid|Guardian":"ability_racial_bearform","Druid|Restoration":"spell_nature_healingtouch",
+  "Evoker|Devastation":"classicon_evoker_devastation","Evoker|Preservation":"classicon_evoker_preservation",
+  "Evoker|Augmentation":"classicon_evoker_augmentation",
+  "Hunter|Beast Mastery":"ability_hunter_bestialdiscipline","Hunter|BeastMastery":"ability_hunter_bestialdiscipline",
+  "Hunter|Marksmanship":"ability_hunter_focusedaim","Hunter|Survival":"ability_hunter_camouflage",
+  "Mage|Arcane":"spell_holy_magicalsentry","Mage|Fire":"spell_fire_firebolt02","Mage|Frost":"spell_frost_frostbolt02",
+  "Monk|Brewmaster":"spell_monk_brewmaster_spec","Monk|Mistweaver":"spell_monk_mistweaver_spec",
+  "Monk|Windwalker":"spell_monk_windwalker_spec",
+  "Paladin|Holy":"spell_holy_holybolt","Paladin|Protection":"ability_paladin_shieldofthetemplar",
+  "Paladin|Retribution":"spell_holy_auraoflight",
+  "Priest|Discipline":"spell_holy_powerwordshield","Priest|Holy":"spell_holy_guardianspirit",
+  "Priest|Shadow":"spell_shadow_shadowwordpain",
+  "Rogue|Assassination":"ability_rogue_eviscerate","Rogue|Outlaw":"ability_rogue_waylay",
+  "Rogue|Subtlety":"ability_stealth",
+  "Shaman|Elemental":"spell_nature_lightning","Shaman|Enhancement":"spell_shaman_improvedstormstrike",
+  "Shaman|Restoration":"spell_nature_magicimmunity",
+  "Warlock|Affliction":"spell_shadow_deathcoil","Warlock|Demonology":"spell_shadow_metamorphosis",
+  "Warlock|Destruction":"spell_shadow_rainoffire",
+  "Warrior|Arms":"ability_warrior_savageblow","Warrior|Fury":"ability_warrior_innerrage",
+  "Warrior|Protection":"ability_warrior_defensivestance"
+};
+function specIcon(cls, spec, size){
+  const slug = SPEC_ICONS[cls + "|" + spec];
+  if(!slug) return "";
+  const px = size || 20;
+  return `<img class="sicon" src="https://wow.zamimg.com/images/wow/icons/medium/${slug}.jpg" alt=""
+    width="${px}" height="${px}" loading="lazy" onerror="this.remove()">`;
+}
+
 const STATS = [
   {k:"crit", n:"Crit", full:"Critical Strike", c:"var(--crit)", hex:"#ff5f52"},
   {k:"haste", n:"Haste", full:"Haste", c:"var(--haste)", hex:"#f0b400"},
@@ -2437,7 +2475,7 @@ function renderRail(specs){
   $("#rail").innerHTML = [...groups].map(([cls,g])=>`
     <div class="cls" style="--cc:${classColor(cls)}"><h3>${esc(g.name)}</h3>
       ${g.specs.map(s=>`<button class="spec-btn ${s.sum.n?"":"nodata"}" data-key="${esc(s.key)}" aria-current="${state.spec===s.key}">
-        <span><span class="dot"></span>${esc(s.spec)}</span>
+        <span>${specIcon(s.cls, s.spec, 18) || '<span class="dot"></span>'}${esc(s.spec)}</span>
         <span class="mini" aria-hidden="true">${s.sum.nStats?STATS.map(st=>`<span style="width:${s.sum.share[st.k]*100}%;background:${st.c}"></span>`).join(""):""}</span>
       </button>`).join("")}
     </div>`).join("");
@@ -2475,7 +2513,7 @@ function renderOverview(specs){
       <thead><tr>${th("","Spec")}${STATS.map(st=>th(st.k,`<span class="sw" style="background:${st.c}"></span><span class="lg">${st.full}</span><span class="sh">${st.n}</span>`)).join("")}
         ${th("prio","Priority","col-prio")}${th("ilvl","Avg ilvl","col-il")}<th class="col-tk">Most used trinket</th></tr></thead>
       <tbody>${rows.map(s=>`<tr data-key="${esc(s.key)}" tabindex="0" style="--cc:${classColor(s.cls)}">
-        <td class="sp"><b>${esc(s.spec)}</b><small>${esc(s.className)}</small></td>
+        <td class="sp">${specIcon(s.cls, s.spec, 20)}<b>${esc(s.spec)}</b><small>${esc(s.className)}</small></td>
         ${STATS.map(st=>cell(s,st)).join("")}
         <td class="prio col-prio">${s.sum.prio.map(x=>x.n).join(" › ") || `<span class="nod">No stats yet</span>`}</td>
         <td class="num col-il">${s.sum.ilvl?s.sum.ilvl.toFixed(1):"–"}</td>
@@ -2600,7 +2638,7 @@ function renderSpec(s){
     <section class="hero">
       ${DATA.demo?`<div class="demo">Preview with made-up players and items</div>`:""}
       <div class="hero-grid">
-        <div><h2>${esc(s.spec)}</h2><div class="who">${esc(s.className)} · ${ROLE_NAMES[s.role]||s.role} · top 10 on ${esc(bossName)}</div></div>
+        <div><div class="hero-name">${specIcon(s.cls, s.spec, 44)}<h2>${esc(s.spec)}</h2></div><div class="who">${esc(s.className)} · ${ROLE_NAMES[s.role]||s.role} · top 10 on ${esc(bossName)}</div></div>
         <div class="facts">
           <div class="fact"><b class="num">${fmtAmt(sum.best)}</b><span>Best ${s.metric}</span></div>
           <div class="fact"><b class="num">${sum.ilvl?sum.ilvl.toFixed(1):"–"}</b><span>Average item level</span></div>
