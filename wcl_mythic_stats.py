@@ -2302,9 +2302,13 @@ dialog::backdrop{background:rgba(0,0,0,.35);backdrop-filter:blur(3px)}
 .gear .g .ench{position:absolute;top:2px;left:2px;width:5px;height:5px;border-radius:50%;background:#4ade80}
 .gear-note{font-size:.72rem;color:var(--faint);display:flex;gap:.7rem;flex-wrap:wrap;margin-top:.3rem}
 .gear-note i{display:inline-block;width:5px;height:5px;margin-right:.25rem}
-.hicon{border-radius:4px;vertical-align:-.22em;margin-right:.3rem}
-.hero{display:inline-flex;align-items:center;background:var(--track);border-radius:999px;padding:.05rem .5rem;font-size:.76rem;color:var(--ink)}
-.hero .hicon{margin-right:.3rem}
+.hicon{width:14px;height:14px;min-width:14px;flex:0 0 14px;object-fit:cover;border-radius:3px;
+  vertical-align:-.18em;margin-right:.3rem;display:inline-block}
+.hero{display:inline-flex;align-items:center;gap:.28rem;background:var(--track);border-radius:999px;
+  padding:0 .5rem;height:1.15rem;line-height:1.15rem;font-size:.74rem;color:var(--ink);white-space:nowrap}
+.hero .hicon{margin:0}
+.tk-row .nm .hicon{width:14px;height:14px}
+.build-top{min-height:0}
 .sicon{border-radius:5px;vertical-align:-.28em;margin-right:.45rem;box-shadow:0 0 0 1px var(--stroke)}
 .heat .sicon{vertical-align:-.3em;margin-right:.5rem}
 .hero .sicon{border-radius:10px;box-shadow:0 0 0 1px var(--stroke), var(--shadow)}
@@ -2530,6 +2534,7 @@ const SPEC_ICONS = {
   "DeathKnight|Blood":"spell_deathknight_bloodpresence","DeathKnight|Frost":"spell_deathknight_frostpresence",
   "DeathKnight|Unholy":"spell_deathknight_unholypresence",
   "DemonHunter|Havoc":"ability_demonhunter_specdps","DemonHunter|Vengeance":"ability_demonhunter_spectank",
+  "DemonHunter|Devourer":"classicon_demonhunter_void","DemonHunter|Devour":"classicon_demonhunter_void",
   "Druid|Balance":"spell_nature_starfall","Druid|Feral":"ability_druid_catform",
   "Druid|Guardian":"ability_racial_bearform","Druid|Restoration":"spell_nature_healingtouch",
   "Evoker|Devastation":"classicon_evoker_devastation","Evoker|Preservation":"classicon_evoker_preservation",
