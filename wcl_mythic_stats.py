@@ -2054,6 +2054,7 @@ button,select,input{font:inherit;color:inherit}
 .stamp i{width:.42rem;height:.42rem;border-radius:50%;background:var(--vers)}
 .stamp.old i{background:var(--haste)} .stamp.stale i{background:var(--crit)}
 .warn{color:var(--haste)}
+.next{color:var(--faint)}
 .dl{color:var(--dim);text-decoration:none;border-bottom:1px solid var(--stroke-2)}
 .dl:hover{color:var(--ink)}
 
@@ -2364,6 +2365,28 @@ function ago(ms){
   if(s < 5400) return Math.round(s/60) + " min ago";
   if(s < 36*3600) return Math.round(s/3600) + " hours ago";
   return Math.round(s/86400) + " days ago";
+}
+// The workflow runs at this hour UTC; change it here if the schedule changes.
+const UPDATE_HOUR_UTC = 0;
+function nextUpdate(){
+  const now = new Date();
+  const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), UPDATE_HOUR_UTC, 0, 0));
+  if(next <= now) next.setUTCDate(next.getUTCDate() + 1);
+  return next;
+}
+function untilNext(){
+  const ms = nextUpdate() - Date.now();
+  const h = Math.floor(ms / 3600000), m = Math.floor(ms % 3600000 / 60000);
+  if(h >= 1) return `${h}h ${m}m`;
+  if(m >= 1) return `${m}m`;
+  return "any moment";
+}
+function tickCountdown(){
+  const el = document.getElementById("next");
+  if(!el) return;
+  el.textContent = `Next update in ${untilNext()}`;
+  el.title = `Runs daily at ${String(UPDATE_HOUR_UTC).padStart(2,"0")}:00 UTC, which is `
+    + nextUpdate().toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"}) + " your time";
 }
 function hexA(hex, a){ const n=parseInt(hex.slice(1),16); return `rgba(${n>>16},${(n>>8)&255},${n&255},${a})`; }
 
@@ -2711,7 +2734,10 @@ function init(){
   $("#sub").innerHTML = `<span class="stamp ${cls}"><i></i>Updated ${esc(ago(gen.getTime()))}</span>`
     + `<span>Mythic · top 10 per spec · ${esc(DATA.region)}</span>`
     + (partial ? `<span class="warn">${pr.loaded} of ${pr.total} loaded</span>` : "")
+    + `<span id="next" class="next"></span>`
     + (DATA.addon ? `<a class="dl" href="${esc(DATA.addon)}" download>Addon</a>` : "");
+  tickCountdown();
+  setInterval(tickCountdown, 30000);
 
   const tabs = DATA.bosses.map((b,i)=>[i,b.name]);
   if(DATA.bosses.length > 1) tabs.push(["all","All bosses"]);

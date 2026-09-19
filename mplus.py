@@ -447,6 +447,22 @@ function applyTheme(){
   try{ localStorage.setItem("mplus-theme", state.theme); }catch(e){}
 }
 
+const UPDATE_HOUR_UTC = 0;
+function nextUpdate(){
+  const now = new Date();
+  const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), UPDATE_HOUR_UTC, 0, 0));
+  if(next <= now) next.setUTCDate(next.getUTCDate() + 1);
+  return next;
+}
+function tickCountdown(){
+  const el = document.getElementById("next");
+  if(!el) return;
+  const ms = nextUpdate() - Date.now();
+  const h = Math.floor(ms / 3600000), m = Math.floor(ms % 3600000 / 60000);
+  el.textContent = "Next update in " + (h >= 1 ? h + "h " + m + "m" : m >= 1 ? m + "m" : "any moment");
+  el.title = "Runs daily at " + String(UPDATE_HOUR_UTC).padStart(2,"0") + ":00 UTC";
+}
+
 function view(){
   if(state.dungeon === "all") return {specs:DATA.specs, comps:DATA.comps, runs:DATA.runs};
   const d = DATA.dungeons.find(x => x.slug === state.dungeon);
@@ -513,7 +529,10 @@ function init(){
   $("#sub").innerHTML = `<span class="pill">${esc(DATA.season)}</span>`
     + `<span class="pill">${esc(DATA.region)}</span>`
     + DATA.affixes.map(a => `<span class="pill">${esc(a)}</span>`).join("")
-    + `<span>${DATA.runs} runs \u00b7 updated ${esc(new Date(DATA.generated).toLocaleString())}</span>`;
+    + `<span>${DATA.runs} runs \u00b7 updated ${esc(new Date(DATA.generated).toLocaleString())}</span>`
+    + `<span id="next" style="color:var(--faint)"></span>`;
+  tickCountdown();
+  setInterval(tickCountdown, 30000);
   $("#tabs").innerHTML = [["all","All dungeons"]].concat(DATA.dungeons.map(d => [d.slug, d.name]))
     .map(([v,n]) => `<button role="tab" data-v="${esc(v)}" aria-selected="${v === state.dungeon}">${esc(n)}</button>`).join("");
   $("#tabs").addEventListener("click", e => {
