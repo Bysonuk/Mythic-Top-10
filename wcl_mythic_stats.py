@@ -815,12 +815,12 @@ def build_player(rank_entry, idx, fight, item_names):
 
 
 def fill_spell_names(api, ids):
-    """Spell names for potions, so a cast with only an ID still reads properly."""
-    known = {int(k): v for k, v in (cache_get("spells", "names") or {}).items()}
+    """Names and icons for potions, so a cast with only an ID still reads properly."""
+    known = {int(k): v for k, v in (cache_get("spells", "info") or {}).items()}
     missing = [i for i in ids if i and i not in known]
     for i in range(0, len(missing), 40):
         chunk = missing[i:i + 40]
-        q = "{ gameData { " + " ".join(f"s{n}: ability(id: {sid}) {{ id name }}"
+        q = "{ gameData { " + " ".join(f"s{n}: ability(id: {sid}) {{ id name icon }}"
                                        for n, sid in enumerate(chunk)) + " } }"
         try:
             d = api.query(q, allow_errors=True)
@@ -830,8 +830,11 @@ def fill_spell_names(api, ids):
         for n, sid in enumerate(chunk):
             ab = gd.get(f"s{n}")
             if ab and ab.get("name"):
-                known[sid] = ab["name"]
-    cache_put("spells", "names", {str(k): v for k, v in known.items()})
+                icon = str(ab.get("icon") or "")
+                if icon.endswith(".jpg"):
+                    icon = icon[:-4]
+                known[sid] = {"name": ab["name"], "icon": icon}
+    cache_put("spells", "info", {str(k): v for k, v in known.items()})
     return known
 
 
@@ -1049,7 +1052,7 @@ def build_from_cache(zone, specs, bosses, region, api=None, addon=False):
         if any_ranks:
             result["bosses"].append(boss_out)
 
-    spell_names = {int(k): v for k, v in (cache_get("spells", "names") or {}).items()}
+    spell_names = {int(k): v for k, v in (cache_get("spells", "info") or {}).items()}
     if api is not None:
         ids = sorted({t["id"] for b in result["bosses"] for s in b["specs"]
                       for p in s["players"] for t in p["trinkets"]})
@@ -1069,8 +1072,11 @@ def build_from_cache(zone, specs, bosses, region, api=None, addon=False):
                 for t in p["trinkets"]:
                     t["name"] = t.get("name") or item_names.get(t["id"])
                 if isinstance(p.get("potion"), dict) and p["potion"].get("id"):
-                    p["potion"]["name"] = (p["potion"].get("name")
-                                           or spell_names.get(p["potion"]["id"], ""))
+                    info = spell_names.get(p["potion"]["id"]) or {}
+                    if isinstance(info, str):
+                        info = {"name": info, "icon": ""}
+                    p["potion"]["name"] = p["potion"].get("name") or info.get("name", "")
+                    p["potion"]["icon"] = p["potion"].get("icon") or info.get("icon", "")
     add_hero_trees(result)
     result["progress"] = {"loaded": loaded, "total": total, "talents": tal_loaded}
     if ADDON_DIR:
@@ -2773,6 +2779,11 @@ function gearStrip(gear){
       title="${esc(SLOT_NAMES[g.slot] || "")}">${img}<b>${g.ilvl || ""}</b>${marks}</a>`;
   }).join("")}</div>`;
 }
+function potIcon(pot){
+  if(!pot || !pot.icon) return "";
+  return `<img class="hicon" src="https://wow.zamimg.com/images/wow/icons/medium/${esc(pot.icon)}.jpg"
+    alt="" loading="lazy" onerror="this.remove()">`;
+}
 function heroIcon(hero, size){
   if(!hero || !hero.icon) return "";
   const px = size || 16;
@@ -3031,7 +3042,7 @@ function card(p, s, allBosses, maxShare){
     : `<div class="pending">${pending ? "Stats not loaded yet." : "This log has no stat data."}</div>`;
   const potName = p.potion && (p.potion.name || (p.potion.id ? "Potion " + p.potion.id : ""));
   const pot = potName
-    ? `<div><span style="color:var(--faint)">Potion</span><span>${esc(potName)}</span></div>`
+    ? `<div><span style="color:var(--faint)">Potion</span><span>${potIcon(p.potion)}${esc(potName)}</span></div>`
     : (p.potion === null || p.potion === undefined ? "" :
        `<div><span style="color:var(--faint)">Potion</span><span style="color:var(--faint)">none cast</span></div>`);
   const tks = p.trinkets.length
@@ -3113,10 +3124,10 @@ function renderSpec(s){
   const potCounts = new Map();
   for(const p of s.players){
     const nm = p.potion && (p.potion.name || (p.potion.id ? "Potion " + p.potion.id : ""));
-    if(nm){ const c = potCounts.get(nm) || {name:nm, n:0}; c.n++; potCounts.set(nm, c); }
+    if(nm){ const c = potCounts.get(nm) || {name:nm, n:0, icon:(p.potion||{}).icon||""}; c.n++; potCounts.set(nm, c); }
   }
   const pots = [...potCounts.values()].sort((a,b)=>b.n-a.n);
-  const potsHtml = pots.length ? pots.map(x=>`<div class="tk-row"><span class="nm">${esc(x.name)}</span><span class="ct num">${x.n}</span>
+  const potsHtml = pots.length ? pots.map(x=>`<div class="tk-row"><span class="nm">${potIcon(x)}${esc(x.name)}</span><span class="ct num">${x.n}</span>
       <span class="bar"><i style="width:${x.n/pots[0].n*100}%"></i></span></div>`).join("") : "";
 
   $("#main").innerHTML = `<div style="--cc:${cc}">
