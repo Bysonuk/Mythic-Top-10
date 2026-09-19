@@ -2039,7 +2039,7 @@ button,select,input{font:inherit;color:inherit}
 /* Shell */
 .app{display:grid;grid-template-rows:auto 1fr;height:100vh;height:100dvh}
 .top{
-  display:flex;align-items:center;gap:var(--gap);
+  display:flex;align-items:center;gap:.6rem var(--gap);flex-wrap:wrap;
   padding:.7rem clamp(12px,2vw,26px);
   background:var(--glass);
   -webkit-backdrop-filter:saturate(180%) blur(22px);
@@ -2057,8 +2057,7 @@ button,select,input{font:inherit;color:inherit}
 .dl{color:var(--dim);text-decoration:none;border-bottom:1px solid var(--stroke-2)}
 .dl:hover{color:var(--ink)}
 
-.bosses{display:flex;gap:.25rem;overflow-x:auto;min-width:0;flex:1;scrollbar-width:none}
-.bosses::-webkit-scrollbar{display:none}
+.bosses{display:flex;flex-wrap:wrap;gap:.25rem;min-width:0;flex:1}
 .bosses button{
   flex:0 0 auto;border:1px solid transparent;background:transparent;border-radius:999px;
   padding:.3rem .8rem;color:var(--dim);cursor:pointer;font-size:.86rem;white-space:nowrap;
@@ -2245,7 +2244,7 @@ main{overflow-y:auto;min-height:0;container-type:inline-size;container-name:main
   .bosses{order:3;flex-basis:100%;padding-top:.3rem}
   .body{display:block;padding:var(--gap) 12px}
   .rail{margin-bottom:var(--gap)}
-  .rail-list{display:flex;gap:.3rem;overflow-x:auto;padding-bottom:.2rem}
+  .rail-list{display:flex;flex-wrap:wrap;gap:.3rem;padding-bottom:.2rem;max-height:9rem;overflow-y:auto}
   .rail-list .cls{display:contents}
   .rail-list .cls h3{display:none}
   .spec-btn{flex:0 0 auto;width:auto;border:1px solid var(--stroke);border-radius:999px;background:var(--glass-2)}
