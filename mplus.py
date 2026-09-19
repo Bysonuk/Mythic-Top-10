@@ -255,79 +255,107 @@ PAGE = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>Mythic+ comps</title>
-<link href="https://fonts.googleapis.com/css2?family=Saira+Extra+Condensed:wght@500;700&family=Saira+Semi+Condensed:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 :root{
-  --bg:#1a1e26; --surface:#232833; --raised:#2c3240; --line:#373e4e;
-  --ink:#eef0f4; --dim:#9aa3b5; --faint:#6c7589; --gold:#c9a14a;
-  --tank:#6ea8ff; --healer:#3ecf9a; --dps:#ff6b5b;
-  --display:"Saira Extra Condensed","Arial Narrow",sans-serif;
-  --ui:"Saira Semi Condensed","Segoe UI",Arial,sans-serif;
+  color-scheme: light dark;
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif;
+  --tank:#3b82f6; --healer:#00b37e; --dps:#ff5f52; --accent:#8b5cf6;
+  --r:18px; --r-sm:11px; --gap:clamp(14px,1.6vw,26px);
+  --bg:#f2f2f6; --bg-2:#e8e8ef;
+  --glass:rgba(255,255,255,.66); --glass-2:rgba(255,255,255,.82);
+  --stroke:rgba(0,0,0,.08); --stroke-2:rgba(0,0,0,.12);
+  --ink:#16161a; --dim:#65656e; --faint:#9a9aa3;
+  --shadow:0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06);
+  --hover:rgba(0,0,0,.04); --track:rgba(0,0,0,.08);
+}
+html[data-theme="dark"]{
+  --bg:#0b0b0e; --bg-2:#14141a;
+  --glass:rgba(28,28,34,.62); --glass-2:rgba(36,36,44,.76);
+  --stroke:rgba(255,255,255,.09); --stroke-2:rgba(255,255,255,.16);
+  --ink:#f2f2f5; --dim:#a0a0ab; --faint:#6e6e78;
+  --shadow:0 1px 2px rgba(0,0,0,.3), 0 12px 40px rgba(0,0,0,.4);
+  --hover:rgba(255,255,255,.06); --track:rgba(255,255,255,.12);
 }
 *{box-sizing:border-box}
-html{font-size:clamp(14px,0.42vw + 9.5px,19px)}
-body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--ui);line-height:1.4}
+html{font-size:clamp(14px,.38vw + 10.2px,18px)}
+body{
+  margin:0;min-height:100%;
+  background:
+    radial-gradient(56rem 38rem at 10% -8%, color-mix(in srgb, var(--dps) 12%, transparent), transparent 60%),
+    radial-gradient(50rem 32rem at 94% 2%, color-mix(in srgb, var(--healer) 13%, transparent), transparent 62%),
+    linear-gradient(var(--bg), var(--bg-2));
+  background-attachment:fixed;
+  color:var(--ink);font-family:var(--sans);line-height:1.45;-webkit-font-smoothing:antialiased;
+}
 a{color:inherit}
 button,select{font:inherit;color:inherit}
-:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .num{font-variant-numeric:tabular-nums}
-.wrap{max-width:1180px;margin:0 auto;padding:clamp(14px,2vw,34px) clamp(12px,2vw,28px) 4rem}
+.glass{background:var(--glass);-webkit-backdrop-filter:saturate(180%) blur(22px);backdrop-filter:saturate(180%) blur(22px);
+  border:1px solid var(--stroke);box-shadow:var(--shadow);border-radius:var(--r)}
+.wrap{max-width:1180px;margin:0 auto;padding:clamp(16px,2.4vw,40px) clamp(12px,2vw,28px) 4rem}
 
-header h1{font-family:var(--display);font-weight:700;font-size:clamp(2rem,4vw,3.2rem);margin:0;line-height:1}
-.sub{color:var(--dim);font-size:.85rem;margin-top:.4rem;display:flex;flex-wrap:wrap;gap:.3rem .8rem;align-items:center}
-.pill{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:.1rem .6rem;color:var(--ink)}
+header{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem}
+h1{font-size:clamp(1.7rem,3vw,2.4rem);font-weight:700;letter-spacing:-.03em;margin:0}
+.sub{color:var(--dim);font-size:.8rem;margin-top:.45rem;display:flex;flex-wrap:wrap;gap:.3rem .5rem;align-items:center}
+.pill{background:var(--glass-2);border:1px solid var(--stroke);border-radius:999px;padding:.1rem .6rem;color:var(--ink)}
+.theme{width:2rem;height:2rem;border-radius:50%;border:1px solid var(--stroke);background:var(--glass-2);cursor:pointer;flex:0 0 auto}
 
-nav{display:flex;gap:.2rem;overflow-x:auto;border-bottom:1px solid var(--line);margin-top:1.2rem;scrollbar-width:none}
+nav{display:flex;gap:.25rem;overflow-x:auto;margin-top:1.2rem;scrollbar-width:none;padding-bottom:.2rem}
 nav::-webkit-scrollbar{display:none}
-nav button{flex:0 0 auto;background:none;border:0;border-bottom:3px solid transparent;padding:.5rem .8rem;color:var(--dim);cursor:pointer;font-family:var(--display);font-size:1.15rem;font-weight:500;white-space:nowrap}
-nav button:hover{color:var(--ink)}
-nav button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--gold)}
+nav button{flex:0 0 auto;border:1px solid transparent;background:transparent;border-radius:999px;padding:.3rem .85rem;
+  color:var(--dim);cursor:pointer;font-size:.86rem;white-space:nowrap}
+nav button:hover{background:var(--hover);color:var(--ink)}
+nav button[aria-selected="true"]{background:var(--glass-2);border-color:var(--stroke);color:var(--ink);font-weight:550}
 
-.controls{display:flex;flex-wrap:wrap;gap:.6rem;align-items:center;margin:1rem 0}
-.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
-.seg button{background:none;border:0;padding:.35rem .8rem;color:var(--dim);cursor:pointer}
-.seg button+button{border-left:1px solid var(--line)}
-.seg button[aria-pressed="true"]{background:var(--raised);color:var(--ink)}
-
-.panels{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:clamp(12px,1.6vw,26px);margin-top:.6rem}
-.panel{background:var(--surface);border-radius:8px;padding:1rem 1.1rem}
-.panel h2{font-family:var(--display);font-weight:500;font-size:1.5rem;margin:0 0 .2rem}
-.panel p.note{color:var(--dim);font-size:.8rem;margin:0 0 .8rem}
-
-.tscroll{overflow-x:auto}
-table{width:100%;border-collapse:separate;border-spacing:0 3px;min-width:520px}
-th{text-align:left;color:var(--dim);font-weight:500;font-size:.78rem;padding:.2rem .5rem}
-td{background:var(--raised);padding:.45rem .5rem;white-space:nowrap}
-td:first-child{border-radius:6px 0 0 6px;border-left:3px solid var(--rc,transparent)}
-td:last-child{border-radius:0 6px 6px 0;white-space:normal;max-width:16rem}
-tr.spec{cursor:pointer}
-tr.spec:hover td{background:#333a4a}
-.role{display:inline-block;width:.5rem;height:.5rem;border-radius:50%;margin-right:.45rem;vertical-align:.05rem}
-.bar{height:8px;border-radius:4px;background:var(--line);overflow:hidden;min-width:60px}
-.bar i{display:block;height:100%;background:var(--gold)}
-.detail td{background:var(--surface);white-space:normal}
-.builds{display:grid;gap:.4rem;margin-top:.4rem}
-.build{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:.5rem;align-items:center}
-.build code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.75rem;color:var(--dim);background:var(--bg);border:1px solid var(--line);border-radius:5px;padding:.25rem .45rem;user-select:all}
-.copy{border:1px solid var(--line);background:var(--raised);border-radius:5px;padding:.2rem .7rem;cursor:pointer;font-size:.8rem;font-weight:600}
-.copy.done{background:var(--healer);border-color:var(--healer);color:#0d2a20}
+.controls{display:flex;flex-wrap:wrap;gap:.7rem;align-items:center;margin:1rem 0 .4rem}
+.seg{display:inline-flex;background:var(--track);border-radius:999px;padding:2px}
+.seg button{background:none;border:0;padding:.26rem .85rem;border-radius:999px;color:var(--dim);cursor:pointer;font-size:.82rem}
+.seg button[aria-pressed="true"]{background:var(--glass-2);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08)}
 .small{color:var(--dim);font-size:.8rem}
 
-.comp{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:.6rem;align-items:center;padding:.45rem 0;border-bottom:1px solid var(--line)}
+.panels{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:var(--gap);margin-top:.6rem}
+.panel{padding:1rem 1.1rem}
+.panel h2{font-size:1.05rem;font-weight:620;letter-spacing:-.01em;margin:0}
+.panel p.note{color:var(--dim);font-size:.8rem;margin:.2rem 0 .8rem}
+
+.tscroll{overflow-x:auto}
+table{width:100%;border-collapse:separate;border-spacing:0 5px;min-width:520px}
+th{text-align:left;color:var(--dim);font-weight:500;font-size:.74rem;padding:.15rem .55rem}
+td{background:var(--glass-2);padding:.45rem .55rem;white-space:nowrap;border-top:1px solid var(--stroke);border-bottom:1px solid var(--stroke)}
+td:first-child{border-radius:var(--r-sm) 0 0 var(--r-sm);border-left:1px solid var(--stroke)}
+td:last-child{border-radius:0 var(--r-sm) var(--r-sm) 0;border-right:1px solid var(--stroke);white-space:normal;max-width:16rem}
+tr.spec{cursor:pointer}
+tr.spec:hover td{background:var(--hover)}
+.role{display:inline-block;width:.45rem;height:.45rem;border-radius:50%;margin-right:.45rem;vertical-align:.05rem}
+.bar{height:6px;border-radius:3px;background:var(--track);overflow:hidden;min-width:60px}
+.bar i{display:block;height:100%;background:var(--rc,var(--accent));border-radius:3px}
+.detail td{background:var(--glass);white-space:normal}
+.builds{display:grid;gap:.4rem;margin-top:.4rem}
+.build{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:.5rem;align-items:center}
+.build code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:.72rem;color:var(--dim);background:var(--track);border-radius:7px;padding:.25rem .45rem;user-select:all}
+.copy{border:1px solid var(--stroke);background:var(--glass-2);border-radius:999px;padding:.2rem .7rem;cursor:pointer;font-size:.78rem;font-weight:550}
+.copy.done{background:var(--healer);border-color:transparent;color:#fff}
+
+.comp{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:.6rem;align-items:center;padding:.5rem 0;border-bottom:1px solid var(--stroke)}
 .comp:last-child{border-bottom:0}
-.comp .n{font-family:var(--display);font-size:1.3rem;color:var(--gold);min-width:2.4rem}
+.comp .n{font-size:1.05rem;font-weight:640;color:var(--accent);min-width:2.6rem}
 .comp .who{display:flex;flex-wrap:wrap;gap:.3rem}
-.comp .who span{background:var(--raised);border-radius:4px;padding:.1rem .45rem;font-size:.82rem}
-footer{margin-top:2.5rem;color:var(--dim);font-size:.8rem}
-footer a{color:var(--ink)}
+.comp .who span{background:var(--track);border-radius:999px;padding:.1rem .55rem;font-size:.8rem}
+footer{margin-top:2.4rem;color:var(--faint);font-size:.78rem}
+footer a{color:var(--dim)}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <h1>Mythic+ comps</h1>
-    <div class="sub" id="sub"></div>
+    <div>
+      <h1>Mythic+ comps</h1>
+      <div class="sub" id="sub"></div>
+    </div>
+    <button class="theme" id="theme" aria-label="Switch between light and dark">\u25d0</button>
   </header>
   <nav id="tabs" role="tablist" aria-label="Dungeon"></nav>
   <div class="controls">
@@ -340,12 +368,12 @@ footer a{color:var(--ink)}
     <span class="small">Click a spec for its talent builds.</span>
   </div>
   <div class="panels">
-    <section class="panel">
+    <section class="panel glass">
       <h2 id="specTitle">Specs in the top keys</h2>
       <p class="note">How often each spec appears in a run, and the key levels it's showing up at.</p>
       <div class="tscroll"><table id="specs"></table></div>
     </section>
-    <section class="panel">
+    <section class="panel glass">
       <h2>Groups that keep appearing</h2>
       <p class="note">The five-spec line-ups that show up most, tank first.</p>
       <div id="comps"></div>
@@ -359,29 +387,40 @@ footer a{color:var(--ink)}
 <script>
 const DATA = /*__DATA__*/null;
 const $ = s => document.querySelector(s);
-const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const state = {dungeon: "all", role: "all", open: null};
+const esc = s => String(s ?? "").replace(/[&<>"\']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","\'":"&#39;"}[c]));
+const state = {dungeon:"all", role:"all", open:null, theme:"auto"};
 
-const CLASS_COLORS = {
-  "Death Knight":"#E0425C","Demon Hunter":"#B84FDB","Druid":"#FF7C0A","Evoker":"#3AAE96",
+const CLASS_LIGHT = {"Death Knight":"#C41E3A","Demon Hunter":"#A330C9","Druid":"#D2691E","Evoker":"#2E8B7A",
+  "Hunter":"#6B8E23","Mage":"#1E90C8","Monk":"#00A878","Paladin":"#DB6FA0","Priest":"#6C6C75",
+  "Rogue":"#B8901F","Shaman":"#2D7FD6","Warlock":"#6C6DD4","Warrior":"#9C7050"};
+const CLASS_DARK = {"Death Knight":"#E0425C","Demon Hunter":"#B84FDB","Druid":"#FF9333","Evoker":"#3FBFA3",
   "Hunter":"#AAD372","Mage":"#3FC7EB","Monk":"#00E68A","Paladin":"#F48CBA","Priest":"#E8E8E8",
-  "Rogue":"#FFF468","Shaman":"#3A8EF0","Warlock":"#9A9BFF","Warrior":"#C69B6D"
-};
+  "Rogue":"#FFF468","Shaman":"#4E9BF5","Warlock":"#9A9BFF","Warrior":"#C69B6D"};
+const isDark = () => document.documentElement.dataset.theme === "dark";
+const classColor = c => (isDark() ? CLASS_DARK : CLASS_LIGHT)[c] || (isDark() ? "#bbb" : "#666");
 const roleColor = r => r === "tank" ? "var(--tank)" : r === "healer" ? "var(--healer)" : "var(--dps)";
 
+function applyTheme(){
+  let t = state.theme;
+  if(t === "auto") t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  document.documentElement.dataset.theme = t;
+  $("#theme").textContent = t === "dark" ? "\u263e" : "\u2600";
+  try{ localStorage.setItem("mplus-theme", state.theme); }catch(e){}
+}
+
 function view(){
-  if(state.dungeon === "all") return {specs: DATA.specs, comps: DATA.comps, runs: DATA.runs};
+  if(state.dungeon === "all") return {specs:DATA.specs, comps:DATA.comps, runs:DATA.runs};
   const d = DATA.dungeons.find(x => x.slug === state.dungeon);
-  return d ? {specs: d.specs, comps: d.comps, runs: d.runs} : {specs: [], comps: [], runs: 0};
+  return d ? {specs:d.specs, comps:d.comps, runs:d.runs} : {specs:[], comps:[], runs:0};
 }
 
 async function copyText(t){
   try{ await navigator.clipboard.writeText(t); return true; }
   catch(e){
     const ta = document.createElement("textarea");
-    ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0";
+    ta.value = t; ta.style.position="fixed"; ta.style.opacity="0";
     document.body.appendChild(ta); ta.select();
-    let ok = false; try{ ok = document.execCommand("copy"); }catch(_){}
+    let ok=false; try{ ok = document.execCommand("copy"); }catch(_){}
     ta.remove(); return ok;
   }
 }
@@ -392,24 +431,23 @@ function render(){
   const top = specs.length ? specs[0].share : 1;
   $("#specTitle").textContent = state.dungeon === "all"
     ? `Specs across ${v.runs} top runs` : `Specs in ${v.runs} top runs here`;
-
   $("#specs").innerHTML =
     `<thead><tr><th>Spec</th><th>In runs</th><th></th><th>Key level</th><th>Brought with</th></tr></thead><tbody>` +
     (specs.length ? specs.map(s => {
-      const lvl = s.low == null ? "–" : (s.low === s.high ? s.low : `${s.low}–${s.high}`);
+      const lvl = s.low == null ? "\u2013" : (s.low === s.high ? s.low : `${s.low}\u2013${s.high}`);
       const open = state.open === s.name;
       const builds = s.builds.length
-        ? s.builds.map((b, i) => `<div class="build">
+        ? s.builds.map(b => `<div class="build">
              <code title="${esc(b.code)}">${esc(b.code)}</code>
              <span class="small num">${b.n} run${b.n > 1 ? "s" : ""}</span>
              <button class="copy" data-code="${esc(b.code)}">Copy</button></div>`).join("")
         : `<div class="small">No talent strings in these runs.</div>`;
-      return `<tr class="spec" data-name="${esc(s.name)}" style="--rc:${CLASS_COLORS[s.cls] || "#888"}">
+      return `<tr class="spec" data-name="${esc(s.name)}" style="--rc:${classColor(s.cls)}">
           <td><span class="role" style="background:${roleColor(s.role)}"></span>${esc(s.name)}</td>
-          <td class="num">${(s.share * 100).toFixed(0)}%</td>
-          <td><span class="bar"><i style="width:${(s.share / top * 100).toFixed(1)}%"></i></span></td>
+          <td class="num">${(s.share*100).toFixed(0)}%</td>
+          <td><span class="bar"><i style="width:${(s.share/top*100).toFixed(1)}%"></i></span></td>
           <td class="num">${lvl}${s.median != null ? ` <span class="small">med ${s.median}</span>` : ""}</td>
-          <td>${s.with.map(w => esc(w[0])).slice(0, 3).join(", ") || "–"}</td>
+          <td>${s.with.map(w => esc(w[0])).slice(0,3).join(", ") || "\u2013"}</td>
         </tr>` + (open ? `<tr class="detail"><td colspan="5">
           <div class="small">Most used talent builds, from the runs above.</div>
           <div class="builds">${builds}</div></td></tr>` : "");
@@ -417,21 +455,28 @@ function render(){
 
   $("#comps").innerHTML = v.comps.length ? v.comps.map(c => `
     <div class="comp">
-      <div class="n num">${(c.share * 100).toFixed(0)}%</div>
+      <div class="n num">${(c.share*100).toFixed(0)}%</div>
       <div class="who">${c.specs.map(s => `<span>${esc(s)}</span>`).join("")}</div>
       <div class="small num">${c.n}</div>
     </div>`).join("") : `<div class="small">Nothing here yet.</div>`;
 }
 
 function init(){
-  if(!DATA){ document.body.innerHTML = "<p style='padding:2rem'>No data yet. Run mplus.py.</p>"; return; }
+  try{ state.theme = localStorage.getItem("mplus-theme") || "auto"; }catch(e){}
+  applyTheme();
+  $("#theme").addEventListener("click", () => {
+    state.theme = isDark() ? "light" : "dark"; applyTheme(); render();
+  });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+    if(state.theme === "auto"){ applyTheme(); render(); }
+  });
+  if(!DATA){ document.body.innerHTML = "<p style=\'padding:2rem\'>No data yet. Run mplus.py.</p>"; return; }
   $("#sub").innerHTML = `<span class="pill">${esc(DATA.season)}</span>`
     + `<span class="pill">${esc(DATA.region)}</span>`
     + DATA.affixes.map(a => `<span class="pill">${esc(a)}</span>`).join("")
-    + `<span>${DATA.runs} runs, updated ${esc(new Date(DATA.generated).toLocaleString())}</span>`;
-
-  $("#tabs").innerHTML = [["all", "All dungeons"]].concat(DATA.dungeons.map(d => [d.slug, d.name]))
-    .map(([v, n]) => `<button role="tab" data-v="${esc(v)}" aria-selected="${v === state.dungeon}">${esc(n)}</button>`).join("");
+    + `<span>${DATA.runs} runs \u00b7 updated ${esc(new Date(DATA.generated).toLocaleString())}</span>`;
+  $("#tabs").innerHTML = [["all","All dungeons"]].concat(DATA.dungeons.map(d => [d.slug, d.name]))
+    .map(([v,n]) => `<button role="tab" data-v="${esc(v)}" aria-selected="${v === state.dungeon}">${esc(n)}</button>`).join("");
   $("#tabs").addEventListener("click", e => {
     const b = e.target.closest("button"); if(!b) return;
     state.dungeon = b.dataset.v; state.open = null;

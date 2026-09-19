@@ -1966,221 +1966,296 @@ end)
 """
 
 
-PAGE_TEMPLATE = r"""<!DOCTYPE html>
+PAGE_TEMPLATE = r"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>Mythic Stat Sheet</title>
 <link rel="icon" type="image/png" href="data:image/png;base64,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">
 <link rel="apple-touch-icon" href="data:image/png;base64,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">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Saira+Extra+Condensed:wght@500;700&family=Saira+Semi+Condensed:wght@400;500;600&display=swap" rel="stylesheet">
 <script>const whTooltips = {colorLinks: true, iconizeLinks: true, renameLinks: true, iconSize: 'small'};</script>
 <script src="https://wow.zamimg.com/js/tooltips.js"></script>
 <style>
 :root{
-  --bg:#1a1e26; --surface:#232833; --raised:#2c3240; --line:#373e4e;
-  --ink:#eef0f4; --dim:#9aa3b5; --faint:#6c7589;
-  --crit:#ff6b5b; --haste:#f4c542; --mastery:#a98cff; --vers:#3ecf9a;
-  --accent:#c9d2e3;
-  --display:"Saira Extra Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
-  --ui:"Saira Semi Condensed", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  --rail:clamp(210px, 17vw, 330px);
-  --gap:clamp(12px, 1.3vw, 28px);
-  --radius:8px;
+  color-scheme: light dark;
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif;
+  --crit:#ff5f52; --haste:#f0b400; --mastery:#8b5cf6; --vers:#00b37e;
+  --r: 18px; --r-sm: 11px;
+  --gap: clamp(14px, 1.5vw, 26px);
+  --rail: clamp(210px, 17vw, 300px);
+}
+/* Light */
+:root{
+  --bg:#f2f2f6; --bg-2:#e8e8ef;
+  --glass: rgba(255,255,255,.66);
+  --glass-2: rgba(255,255,255,.82);
+  --stroke: rgba(0,0,0,.08);
+  --stroke-2: rgba(0,0,0,.12);
+  --ink:#16161a; --dim:#65656e; --faint:#9a9aa3;
+  --shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06);
+  --hover: rgba(0,0,0,.04);
+  --track: rgba(0,0,0,.08);
+}
+html[data-theme="dark"]{
+  --bg:#0b0b0e; --bg-2:#14141a;
+  --glass: rgba(28,28,34,.62);
+  --glass-2: rgba(36,36,44,.76);
+  --stroke: rgba(255,255,255,.09);
+  --stroke-2: rgba(255,255,255,.16);
+  --ink:#f2f2f5; --dim:#a0a0ab; --faint:#6e6e78;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 40px rgba(0,0,0,.4);
+  --hover: rgba(255,255,255,.06);
+  --track: rgba(255,255,255,.12);
 }
 *{box-sizing:border-box}
-html{font-size:clamp(14px, 0.42vw + 9.5px, 19px)}
-html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:var(--ui);line-height:1.4}
+html{font-size:clamp(14px, .38vw + 10.2px, 18px)}
+html,body{margin:0;height:100%}
+body{
+  background:
+    radial-gradient(60rem 40rem at 12% -10%, color-mix(in srgb, var(--crit) 12%, transparent), transparent 60%),
+    radial-gradient(52rem 34rem at 92% 4%, color-mix(in srgb, var(--vers) 13%, transparent), transparent 62%),
+    radial-gradient(46rem 32rem at 60% 100%, color-mix(in srgb, var(--mastery) 10%, transparent), transparent 60%),
+    linear-gradient(var(--bg), var(--bg-2));
+  background-attachment: fixed;
+  color:var(--ink); font-family:var(--sans); line-height:1.45;
+  -webkit-font-smoothing:antialiased;
+}
 a{color:inherit}
 button,select,input{font:inherit;color:inherit}
-:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+:focus-visible{outline:2px solid color-mix(in srgb, var(--cc, var(--ink)) 70%, transparent); outline-offset:2px}
 .num{font-variant-numeric:tabular-nums}
 
-/* Shell: top bar, then rail + main filling the viewport */
-.app{display:grid;grid-template-rows:auto 1fr;height:100vh;height:100dvh}
-.top{display:flex;align-items:flex-end;gap:var(--gap);padding:.9rem var(--gap) 0;border-bottom:1px solid var(--line);min-width:0}
-.raid{flex:0 0 auto;padding-bottom:.7rem;min-width:0}
-.raid h1{margin:0;font-family:var(--display);font-weight:700;font-size:clamp(1.6rem, 2.2vw, 2.6rem);line-height:.95;white-space:nowrap}
-.raid p{margin:.2rem 0 0;color:var(--dim);font-size:.8rem;display:flex;flex-wrap:wrap;align-items:center;gap:.3rem .6rem}
-.raid .warn{color:var(--haste)}
-.stamp{display:inline-flex;align-items:center;gap:.4rem;background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:.1rem .6rem;color:var(--ink)}
-.stamp i{width:.5rem;height:.5rem;border-radius:50%;background:var(--vers);flex:0 0 auto}
-.stamp.old i{background:var(--haste)}
-.stamp.stale i{background:var(--crit)}
-.dl{color:var(--ink);text-decoration:none;border-bottom:1px solid var(--line)}
-.dl:hover{border-bottom-color:var(--ink)}
-.bosses{display:flex;gap:.2rem;overflow-x:auto;min-width:0;flex:1;scrollbar-width:none;align-self:flex-end}
-.bosses::-webkit-scrollbar{display:none}
-.bosses button{flex:0 0 auto;background:none;border:0;border-bottom:3px solid transparent;padding:.5rem .8rem .6rem;cursor:pointer;color:var(--dim);font-family:var(--display);font-weight:500;font-size:1.15rem;white-space:nowrap}
-.bosses button:hover{color:var(--ink)}
-.bosses button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--ink)}
+.glass{
+  background:var(--glass);
+  -webkit-backdrop-filter:saturate(180%) blur(22px);
+  backdrop-filter:saturate(180%) blur(22px);
+  border:1px solid var(--stroke);
+  box-shadow:var(--shadow);
+  border-radius:var(--r);
+}
 
-.body{display:grid;grid-template-columns:var(--rail) minmax(0,1fr);min-height:0}
+/* Shell */
+.app{display:grid;grid-template-rows:auto 1fr;height:100vh;height:100dvh}
+.top{
+  display:flex;align-items:center;gap:var(--gap);
+  padding:.7rem clamp(12px,2vw,26px);
+  background:var(--glass);
+  -webkit-backdrop-filter:saturate(180%) blur(22px);
+  backdrop-filter:saturate(180%) blur(22px);
+  border-bottom:1px solid var(--stroke);
+  min-width:0;
+}
+.raid{flex:0 0 auto;min-width:0}
+.raid h1{margin:0;font-size:1.12rem;font-weight:650;letter-spacing:-.02em;white-space:nowrap}
+.raid p{margin:.1rem 0 0;color:var(--dim);font-size:.76rem;display:flex;flex-wrap:wrap;gap:.2rem .55rem;align-items:center}
+.stamp{display:inline-flex;align-items:center;gap:.35rem}
+.stamp i{width:.42rem;height:.42rem;border-radius:50%;background:var(--vers)}
+.stamp.old i{background:var(--haste)} .stamp.stale i{background:var(--crit)}
+.warn{color:var(--haste)}
+.dl{color:var(--dim);text-decoration:none;border-bottom:1px solid var(--stroke-2)}
+.dl:hover{color:var(--ink)}
+
+.bosses{display:flex;gap:.25rem;overflow-x:auto;min-width:0;flex:1;scrollbar-width:none}
+.bosses::-webkit-scrollbar{display:none}
+.bosses button{
+  flex:0 0 auto;border:1px solid transparent;background:transparent;border-radius:999px;
+  padding:.3rem .8rem;color:var(--dim);cursor:pointer;font-size:.86rem;white-space:nowrap;
+  transition:background .15s, color .15s;
+}
+.bosses button:hover{background:var(--hover);color:var(--ink)}
+.bosses button[aria-selected="true"]{background:var(--glass-2);border-color:var(--stroke);color:var(--ink);font-weight:550}
+.theme{
+  flex:0 0 auto;width:2rem;height:2rem;border-radius:50%;border:1px solid var(--stroke);
+  background:var(--glass-2);cursor:pointer;display:grid;place-items:center;font-size:.9rem;
+}
+.theme:hover{background:var(--hover)}
+
+.body{display:grid;grid-template-columns:var(--rail) minmax(0,1fr);min-height:0;gap:var(--gap);
+  padding:var(--gap) clamp(12px,2vw,26px) var(--gap)}
 
 /* Rail */
-.rail{border-right:1px solid var(--line);overflow-y:auto;padding:var(--gap) 0 2rem;min-height:0}
-.rail-tools{padding:0 var(--gap) .8rem;display:grid;gap:.5rem}
-.rail input{width:100%;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:.45rem .7rem}
-.roles{display:grid;grid-template-columns:repeat(4,1fr);background:var(--surface);border:1px solid var(--line);border-radius:6px;overflow:hidden}
-.roles button{border:0;background:none;padding:.35rem 0;cursor:pointer;color:var(--dim);font-size:.82rem}
-.roles button[aria-pressed="true"]{background:var(--raised);color:var(--ink)}
-.overview-link{display:flex;align-items:center;gap:.6rem;width:100%;border:0;background:none;text-align:left;padding:.55rem var(--gap);cursor:pointer;font-weight:600}
-.overview-link[aria-current="true"]{background:var(--raised)}
-.overview-link .grid-ico{display:grid;grid-template-columns:repeat(4,6px);gap:2px}
-.overview-link .grid-ico i{width:6px;height:6px;border-radius:1px}
-.cls{margin-top:.7rem}
-.cls h3{margin:0;padding:.2rem var(--gap);font-size:.75rem;font-weight:500;color:var(--cc)}
-.spec-btn{display:grid;grid-template-columns:1fr auto;gap:.5rem;align-items:center;width:100%;border:0;background:none;text-align:left;padding:.32rem var(--gap);cursor:pointer;border-left:3px solid transparent}
-.spec-btn:hover{background:var(--surface)}
-.spec-btn[aria-current="true"]{background:var(--raised);border-left-color:var(--cc)}
-.spec-btn .mini{display:flex;width:clamp(40px,3.6vw,70px);height:6px;border-radius:3px;overflow:hidden;background:var(--line)}
+.rail{overflow:hidden;display:flex;flex-direction:column;min-height:0;padding:.7rem}
+.rail-tools{display:grid;gap:.45rem;padding:.1rem .1rem .6rem}
+.rail input{
+  width:100%;background:var(--glass-2);border:1px solid var(--stroke);border-radius:999px;
+  padding:.4rem .85rem;font-size:.86rem;
+}
+.rail input::placeholder{color:var(--faint)}
+.roles{display:grid;grid-template-columns:repeat(4,1fr);background:var(--track);border-radius:999px;padding:2px}
+.roles button{border:0;background:none;padding:.26rem 0;border-radius:999px;cursor:pointer;color:var(--dim);font-size:.78rem}
+.roles button[aria-pressed="true"]{background:var(--glass-2);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.rail-list{overflow-y:auto;min-height:0;padding-right:.2rem;scrollbar-width:thin}
+.overview-link{
+  display:flex;align-items:center;gap:.55rem;width:100%;border:0;background:none;text-align:left;
+  padding:.45rem .55rem;cursor:pointer;border-radius:var(--r-sm);font-size:.88rem;font-weight:550;color:var(--ink);
+}
+.overview-link:hover{background:var(--hover)}
+.overview-link[aria-current="true"]{background:var(--glass-2);box-shadow:inset 0 0 0 1px var(--stroke)}
+.overview-link .grid-ico{display:grid;grid-template-columns:repeat(2,5px);gap:2px}
+.overview-link .grid-ico i{width:5px;height:5px;border-radius:1px}
+.cls{margin-top:.55rem}
+.cls h3{margin:0;padding:.15rem .55rem;font-size:.66rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
+.spec-btn{
+  display:grid;grid-template-columns:1fr auto;gap:.5rem;align-items:center;width:100%;
+  border:0;background:none;text-align:left;padding:.3rem .55rem;cursor:pointer;border-radius:var(--r-sm);
+  font-size:.88rem;color:var(--ink);
+}
+.spec-btn:hover{background:var(--hover)}
+.spec-btn[aria-current="true"]{background:color-mix(in srgb, var(--cc) 16%, transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--cc) 40%, transparent)}
+.spec-btn .dot{width:.45rem;height:.45rem;border-radius:50%;background:var(--cc);display:inline-block;margin-right:.45rem;vertical-align:.04rem}
+.spec-btn .mini{display:flex;width:clamp(34px,3vw,56px);height:5px;border-radius:3px;overflow:hidden;background:var(--track)}
 .spec-btn .mini span{height:100%}
 .spec-btn.nodata{color:var(--faint)}
-.rail-empty{padding:1rem var(--gap);color:var(--dim)}
+.rail-empty{padding:.8rem .6rem;color:var(--dim);font-size:.86rem}
 
 /* Main */
-main{overflow-y:auto;min-height:0;container-type:inline-size;container-name:main}
-.pad{padding:var(--gap) var(--gap) 3rem}
-.empty{padding:4rem var(--gap);color:var(--dim);text-align:center}
-.demo{display:inline-block;margin-bottom:1rem;padding:.2rem .6rem;border:1px solid var(--haste);color:var(--haste);border-radius:4px;font-size:.8rem}
+main{overflow-y:auto;min-height:0;container-type:inline-size;container-name:main;border-radius:var(--r)}
+.pad{padding:clamp(14px,1.8vw,28px)}
+.empty{padding:4rem 1rem;color:var(--dim);text-align:center}
+.demo{display:inline-block;margin-bottom:1rem;padding:.15rem .7rem;border:1px solid var(--stroke-2);border-radius:999px;font-size:.78rem;color:var(--dim)}
 
-/* Overview heatmap */
-.ov-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:.5rem 1.5rem;margin-bottom:1rem}
-.ov-head h2{margin:0;font-family:var(--display);font-weight:700;font-size:clamp(1.8rem,2.6vw,3rem);line-height:1}
-.ov-head p{margin:0;color:var(--dim);font-size:.85rem;max-width:60ch}
+/* Overview */
+.ov-head{margin-bottom:1.1rem;max-width:62ch}
+.ov-head h2{margin:0;font-size:clamp(1.5rem,2.4vw,2.1rem);font-weight:680;letter-spacing:-.025em}
+.ov-head p{margin:.35rem 0 0;color:var(--dim);font-size:.84rem}
 .heat-wrap{overflow-x:auto}
-.heat{width:100%;border-collapse:separate;border-spacing:0 3px}
+.heat{width:100%;border-collapse:separate;border-spacing:0 6px}
 .heat .sh{display:none}
-.heat th{font-weight:500;color:var(--dim);font-size:.8rem;text-align:left;padding:.3rem .6rem;cursor:pointer;white-space:nowrap;user-select:none}
+.heat th{
+  font-weight:500;color:var(--dim);font-size:.74rem;text-align:left;padding:.2rem .7rem;
+  cursor:pointer;white-space:nowrap;user-select:none;letter-spacing:.02em;
+}
 .heat th.on{color:var(--ink)}
-.heat th .sw{display:inline-block;width:.6rem;height:.6rem;border-radius:2px;margin-right:.35rem}
-.heat td{padding:0 .6rem;height:2.6rem;background:var(--surface);white-space:nowrap}
+.heat th .sw{display:inline-block;width:.5rem;height:.5rem;border-radius:2px;margin-right:.35rem}
 .heat tr{cursor:pointer}
-.heat tbody tr:hover td{background:var(--raised)}
-.heat td:first-child{border-left:4px solid var(--cc);border-radius:var(--radius) 0 0 var(--radius)}
-.heat td:last-child{border-radius:0 var(--radius) var(--radius) 0}
-.heat .sp b{font-family:var(--display);font-weight:700;font-size:1.25rem;color:var(--cc);margin-right:.4rem}
-.heat .sp small{color:var(--dim)}
-.heat td.cell{padding:3px;width:11%}
-.heat .cell div{height:calc(2.6rem - 6px);border-radius:5px;display:flex;align-items:center;justify-content:center;font-weight:600;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.45)}
-.heat .cell.hi div{box-shadow:inset 0 0 0 2px rgba(255,255,255,.85)}
-.heat .prio{color:var(--dim);font-size:.85rem}
-.heat .tk{max-width:22ch;overflow:hidden;text-overflow:ellipsis;font-size:.85rem}
+.heat td{padding:0 .7rem;height:2.7rem;background:var(--glass);border-top:1px solid var(--stroke);border-bottom:1px solid var(--stroke);white-space:nowrap;transition:background .15s}
+.heat td:first-child{border-left:1px solid var(--stroke);border-radius:var(--r-sm) 0 0 var(--r-sm);position:relative;padding-left:1rem}
+.heat td:first-child::before{content:"";position:absolute;left:.45rem;top:50%;transform:translateY(-50%);width:.4rem;height:.4rem;border-radius:50%;background:var(--cc)}
+.heat td:last-child{border-right:1px solid var(--stroke);border-radius:0 var(--r-sm) var(--r-sm) 0}
+.heat tbody tr:hover td{background:var(--glass-2)}
+.heat .sp b{font-weight:600;font-size:.94rem;margin-right:.4rem}
+.heat .sp small{color:var(--dim);font-size:.78rem}
+.heat td.cell{padding:4px;width:10.5%}
+.heat .cell div{height:calc(2.7rem - 8px);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:.82rem;font-weight:600}
+.heat .cell.hi div{box-shadow:inset 0 0 0 1.5px color-mix(in srgb, var(--ink) 45%, transparent)}
+.heat .prio{color:var(--dim);font-size:.82rem}
+.heat .tk{max-width:22ch;overflow:hidden;text-overflow:ellipsis;font-size:.82rem}
 .heat .tk a{text-decoration:none}
-.heat .nod{color:var(--faint);font-size:.85rem}
+.heat .nod{color:var(--faint);font-size:.8rem}
 @container main (max-width:900px){ .heat .col-prio{display:none} }
 @container main (max-width:720px){ .heat .col-tk{display:none} .heat .lg{display:none} .heat .sh{display:inline} }
-@container main (max-width:520px){ .heat .col-il{display:none} .heat .sp small{display:none} .heat td.cell{width:auto} .heat .sp b{font-size:1.05rem} .heat td,.heat th{padding-left:.35rem;padding-right:.35rem} .heat .sw{display:none} }
+@container main (max-width:520px){ .heat .col-il{display:none} .heat .sp small{display:none} .heat td.cell{width:auto} .heat td,.heat th{padding-left:.4rem;padding-right:.4rem} .heat .sw{display:none} }
 
 /* Spec page */
-.hero{position:relative;padding:clamp(1rem,2vw,2.2rem) var(--gap);border-bottom:1px solid var(--line);
-  background:linear-gradient(100deg, color-mix(in srgb, var(--cc) 22%, var(--bg)) 0%, var(--bg) 70%)}
-.hero-grid{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:1rem 2.5rem}
-.hero h2{margin:0;font-family:var(--display);font-weight:700;font-size:clamp(2.8rem,6cqi,6rem);line-height:.85;color:var(--cc)}
-.hero .who{margin-top:.35rem;color:var(--ink);opacity:.8}
-.facts{display:flex;flex-wrap:wrap;gap:.5rem clamp(1.2rem,2.5vw,3rem)}
-.fact b{display:block;font-family:var(--display);font-weight:700;font-size:clamp(1.6rem,2.8cqi,2.6rem);line-height:1}
-.fact span{color:var(--dim);font-size:.8rem}
-
-.split-big{margin-top:clamp(1rem,2vw,1.8rem)}
-.split-bar{display:flex;height:clamp(28px,2.6vw,44px);border-radius:6px;overflow:hidden;background:var(--line)}
-.split-bar span{display:flex;align-items:center;padding:0 .6rem;min-width:0;overflow:hidden;white-space:nowrap;font-weight:600;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.45);font-size:.9rem}
-.split-note{display:flex;flex-wrap:wrap;justify-content:space-between;gap:.3rem 1rem;margin-top:.45rem;font-size:.85rem;color:var(--dim)}
+.hero{
+  padding:clamp(1.1rem,2vw,2rem) clamp(14px,1.8vw,28px);
+  border-radius:var(--r) var(--r) 0 0;
+  background:linear-gradient(140deg, color-mix(in srgb, var(--cc) 20%, transparent), transparent 62%);
+  border-bottom:1px solid var(--stroke);
+}
+.hero-grid{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:1rem 2.4rem}
+.hero h2{margin:0;font-size:clamp(2rem,4.4cqi,3.4rem);font-weight:700;letter-spacing:-.03em;line-height:1}
+.hero .who{margin-top:.3rem;color:var(--dim);font-size:.9rem}
+.facts{display:flex;flex-wrap:wrap;gap:.5rem clamp(1.1rem,2.2vw,2.6rem)}
+.fact b{display:block;font-size:clamp(1.3rem,2.2cqi,1.9rem);font-weight:650;letter-spacing:-.02em;line-height:1.1}
+.fact span{color:var(--dim);font-size:.76rem}
+.split-big{margin-top:clamp(.9rem,1.6vw,1.5rem)}
+.split-bar{display:flex;height:clamp(24px,2.2vw,34px);border-radius:10px;overflow:hidden;background:var(--track)}
+.split-bar span{display:flex;align-items:center;padding:0 .6rem;min-width:0;overflow:hidden;white-space:nowrap;font-weight:600;font-size:.82rem}
+.split-note{display:flex;flex-wrap:wrap;justify-content:space-between;gap:.3rem 1rem;margin-top:.45rem;font-size:.82rem;color:var(--dim)}
 .split-note strong{color:var(--ink);font-weight:600}
 
-.panels{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:var(--gap);margin-top:var(--gap)}
-.panel{background:var(--surface);border-radius:var(--radius);padding:1rem 1.1rem}
-.panel h3{margin:0 0 .8rem;font-family:var(--display);font-weight:500;font-size:1.35rem}
-.panel h3 small{font-family:var(--ui);font-size:.78rem;color:var(--dim);margin-left:.4rem;font-weight:400}
+.panels{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:var(--gap);margin-top:var(--gap)}
+.panel{padding:1rem 1.1rem}
+.panel h3{margin:0 0 .7rem;font-size:1rem;font-weight:620;letter-spacing:-.01em}
+.panel h3 small{font-size:.76rem;color:var(--dim);margin-left:.4rem;font-weight:400;letter-spacing:0}
 
 .tk-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.2rem .8rem;align-items:center;padding:.3rem 0}
-.tk-row .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tk-row .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.88rem}
 .tk-row .nm a{text-decoration:none}
-.tk-row .ct{color:var(--dim);font-size:.85rem}
-.tk-row .bar{grid-column:1 / -1;height:4px;border-radius:2px;background:var(--line);overflow:hidden}
-.tk-row .bar i{display:block;height:100%;background:var(--cc)}
+.tk-row .ct{color:var(--dim);font-size:.8rem}
+.tk-row .bar{grid-column:1 / -1;height:4px;border-radius:2px;background:var(--track);overflow:hidden}
+.tk-row .bar i{display:block;height:100%;background:var(--cc);border-radius:2px}
 
-.rng{display:grid;grid-template-columns:5.5rem minmax(0,1fr) auto;gap:.8rem;align-items:center;padding:.45rem 0}
-.rng .lb{font-size:.9rem}
-.rng .track{position:relative;height:18px}
-.rng .track::before{content:"";position:absolute;left:0;right:0;top:8px;height:2px;background:var(--line)}
-.rng .dot{position:absolute;top:4px;width:10px;height:10px;margin-left:-5px;border-radius:50%;opacity:.75}
-.rng .avg{position:absolute;top:0;width:3px;height:18px;margin-left:-1.5px;background:var(--ink);border-radius:2px}
-.rng .vals{text-align:right;font-size:.85rem}
-.rng .vals small{display:block;white-space:nowrap;color:var(--dim);font-size:.72rem}
+.rng{display:grid;grid-template-columns:5.4rem minmax(0,1fr) auto;gap:.7rem;align-items:center;padding:.4rem 0}
+.rng .lb{font-size:.85rem;color:var(--dim)}
+.rng .track{position:relative;height:16px}
+.rng .track::before{content:"";position:absolute;left:0;right:0;top:7px;height:2px;background:var(--track);border-radius:2px}
+.rng .dot{position:absolute;top:3px;width:9px;height:9px;margin-left:-4.5px;border-radius:50%;opacity:.8}
+.rng .avg{position:absolute;top:0;width:2px;height:16px;margin-left:-1px;background:var(--ink);border-radius:2px;opacity:.75}
+.rng .vals{text-align:right;font-size:.84rem}
+.rng .vals small{display:block;color:var(--faint);font-size:.7rem;white-space:nowrap}
 
-.players-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:.6rem;margin:calc(var(--gap) * 1.4) 0 .8rem}
-.players-head h3{margin:0;font-family:var(--display);font-weight:700;font-size:1.7rem}
-.players-head select{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:.35rem .6rem}
-.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr));gap:calc(var(--gap) * .7)}
-.card{background:var(--surface);border-radius:var(--radius);padding:.9rem 1rem;display:flex;flex-direction:column;gap:.7rem;border-top:3px solid transparent}
-.card.first{border-top-color:var(--cc)}
-.c-top{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:.7rem;align-items:start}
-.rank{font-family:var(--display);font-weight:700;font-size:2rem;line-height:.9;color:var(--faint);min-width:1.6ch}
+.players-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:.6rem;margin:calc(var(--gap) * 1.2) 0 .7rem}
+.players-head h3{margin:0;font-size:1.05rem;font-weight:620}
+.players-head select{background:var(--glass-2);border:1px solid var(--stroke);border-radius:999px;padding:.3rem .8rem;font-size:.84rem}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,290px),1fr));gap:calc(var(--gap) * .7)}
+.card{padding:.85rem .95rem;display:flex;flex-direction:column;gap:.6rem}
+.card.first{box-shadow:var(--shadow), inset 0 0 0 1px color-mix(in srgb, var(--cc) 45%, transparent)}
+.c-top{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:.6rem;align-items:start}
+.rank{font-size:1.3rem;font-weight:660;line-height:1.1;color:var(--faint);min-width:1.4ch}
 .card.first .rank{color:var(--cc)}
 .nm2{min-width:0}
-.nm2 b{display:block;font-weight:600;font-size:1.05rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.nm2 small{display:block;color:var(--dim);font-size:.78rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nm2 b{display:block;font-weight:600;font-size:.95rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nm2 small{display:block;color:var(--dim);font-size:.74rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .out{text-align:right}
-.out b{display:block;font-family:var(--display);font-weight:700;font-size:1.6rem;line-height:.95}
-.out small{color:var(--dim);font-size:.75rem}
-.sbars{display:grid;gap:.3rem}
-.sb{display:grid;grid-template-columns:4.2rem minmax(0,1fr) 3.9rem 2.6rem;gap:.5rem;align-items:center;font-size:.85rem}
-.sb .t{height:7px;border-radius:4px;background:var(--line);overflow:hidden}
-.sb .t i{display:block;height:100%;border-radius:4px}
+.out b{display:block;font-size:1.1rem;font-weight:650;letter-spacing:-.02em;line-height:1.1}
+.out small{color:var(--dim);font-size:.7rem}
+.sbars{display:grid;gap:.26rem}
+.sb{display:grid;grid-template-columns:3.6rem minmax(0,1fr) 3.6rem 2.3rem;gap:.45rem;align-items:center;font-size:.8rem}
+.sb .t{height:6px;border-radius:3px;background:var(--track);overflow:hidden}
+.sb .t i{display:block;height:100%;border-radius:3px}
 .sb .v{text-align:right}
-.sb .p{text-align:right;color:var(--dim)}
-.prim{display:flex;justify-content:space-between;font-size:.82rem;color:var(--dim)}
-.prim b{color:var(--ink);font-weight:500}
-.c-tk{display:grid;gap:.2rem;font-size:.88rem;border-top:1px solid var(--line);padding-top:.6rem}
+.sb .p{text-align:right;color:var(--faint)}
+.prim{display:flex;justify-content:space-between;font-size:.78rem;color:var(--dim)}
+.prim b{color:var(--ink);font-weight:550}
+.c-tk{display:grid;gap:.15rem;font-size:.84rem;border-top:1px solid var(--stroke);padding-top:.55rem}
 .c-tk div{display:flex;justify-content:space-between;gap:.6rem;min-width:0}
 .c-tk a{text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.c-tk small{color:var(--dim);flex:0 0 auto}
-.c-foot{display:flex;flex-wrap:wrap;gap:.2rem 1rem;font-size:.78rem;color:var(--dim);margin-top:auto}
-.c-foot a{color:var(--ink)}
-.pending{color:var(--faint);font-style:italic;font-size:.88rem;padding:.4rem 0}
-
-/* Talents */
-.tal{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:.4rem;align-items:center}
-.tal code{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:Consolas,"Cascadia Mono","Courier New",monospace;font-size:.78rem;color:var(--dim);background:var(--bg);border:1px solid var(--line);border-radius:5px;padding:.3rem .45rem;cursor:text;user-select:all}
-.copy{border:1px solid var(--line);background:var(--raised);border-radius:5px;padding:.25rem .7rem;cursor:pointer;font-size:.82rem;font-weight:600;white-space:nowrap}
-.copy:hover{border-color:var(--cc,var(--ink))}
-.copy.done{background:var(--vers);border-color:var(--vers);color:#0d2a20}
-.view{font-size:.82rem;color:var(--dim);white-space:nowrap}
-.c-tal{border-top:1px solid var(--line);padding-top:.6rem;display:grid;gap:.35rem}
-.c-tal .h{font-size:.78rem;color:var(--dim)}
-.build{padding:.55rem 0;border-bottom:1px solid var(--line);display:grid;gap:.35rem}
+.c-tk small{color:var(--faint);flex:0 0 auto}
+.c-tal{border-top:1px solid var(--stroke);padding-top:.55rem;display:grid;gap:.3rem}
+.c-tal .h{font-size:.72rem;color:var(--faint);letter-spacing:.04em;text-transform:uppercase}
+.tal{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:.35rem;align-items:center}
+.tal code{
+  display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-family:ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;font-size:.72rem;color:var(--dim);
+  background:var(--track);border-radius:7px;padding:.25rem .45rem;user-select:all;
+}
+.copy{border:1px solid var(--stroke);background:var(--glass-2);border-radius:999px;padding:.2rem .65rem;cursor:pointer;font-size:.78rem;font-weight:550}
+.copy:hover{background:var(--hover)}
+.copy.done{background:var(--vers);border-color:transparent;color:#fff}
+.view{font-size:.78rem;color:var(--dim);white-space:nowrap;text-decoration:none}
+.view:hover{color:var(--ink)}
+.c-foot{display:flex;flex-wrap:wrap;gap:.15rem .8rem;font-size:.74rem;color:var(--faint);margin-top:auto}
+.c-foot a{color:var(--dim)}
+.pending{color:var(--faint);font-size:.82rem;padding:.3rem 0}
+.build{padding:.5rem 0;border-bottom:1px solid var(--stroke);display:grid;gap:.3rem}
 .build:last-child{border-bottom:0}
-.build-top{display:flex;justify-content:space-between;align-items:baseline;gap:.8rem}
+.build-top{display:flex;justify-content:space-between;align-items:baseline;gap:.7rem;font-size:.86rem}
 .build-top b{font-weight:600}
-.build-top .share{height:4px;flex:1;max-width:40%;border-radius:2px;background:var(--line);overflow:hidden;align-self:center}
+.build-top .share{height:4px;flex:1;max-width:38%;border-radius:2px;background:var(--track);overflow:hidden;align-self:center}
 .build-top .share i{display:block;height:100%;background:var(--cc)}
-.build small{color:var(--dim);font-size:.78rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.build small{color:var(--faint);font-size:.74rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-/* Narrow screens: rail becomes a top strip */
-@media (max-width:760px){
+@media (max-width:780px){
   .app{height:auto;display:block}
-  .top{flex-wrap:wrap;align-items:flex-start}
-  .raid{padding-bottom:0}
-  .bosses{flex-basis:100%}
-  .body{display:block}
-  .rail{border-right:0;border-bottom:1px solid var(--line);overflow:visible;padding-bottom:.6rem}
-  .rail-list{display:flex;gap:.3rem;overflow-x:auto;padding:0 var(--gap) .3rem}
+  .top{flex-wrap:wrap}
+  .bosses{order:3;flex-basis:100%;padding-top:.3rem}
+  .body{display:block;padding:var(--gap) 12px}
+  .rail{margin-bottom:var(--gap)}
+  .rail-list{display:flex;gap:.3rem;overflow-x:auto;padding-bottom:.2rem}
   .rail-list .cls{display:contents}
   .rail-list .cls h3{display:none}
-  .spec-btn{flex:0 0 auto;width:auto;border-left:0;border-bottom:3px solid transparent;border-radius:6px;background:var(--surface)}
-  .spec-btn[aria-current="true"]{border-bottom-color:var(--cc)}
+  .spec-btn{flex:0 0 auto;width:auto;border:1px solid var(--stroke);border-radius:999px;background:var(--glass-2)}
   .spec-btn .mini{display:none}
-  .overview-link{padding:.5rem var(--gap)}
   main{overflow:visible}
-  .rng{grid-template-columns:4.5rem minmax(0,1fr) auto}
+  .hero{border-radius:var(--r) var(--r) 0 0}
 }
 @media (prefers-reduced-motion:no-preference){
-  .hero, .panels, .cards{animation:rise .25s ease-out}
-  @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .hero,.panels,.cards,.heat{animation:fade .22s ease-out}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 }
 </style>
 </head>
@@ -2189,9 +2264,10 @@ main{overflow-y:auto;min-height:0;container-type:inline-size;container-name:main
   <div class="top">
     <div class="raid"><h1 id="title">Mythic Stat Sheet</h1><p id="sub"></p></div>
     <nav class="bosses" id="bosses" role="tablist" aria-label="Boss"></nav>
+    <button class="theme" id="theme" title="Light or dark" aria-label="Switch between light and dark">◐</button>
   </div>
   <div class="body">
-    <aside class="rail" aria-label="Specs">
+    <aside class="rail glass" aria-label="Specs">
       <div class="rail-tools">
         <input type="search" id="q" placeholder="Find a spec or player" aria-label="Find a spec or player">
         <div class="roles" id="roles" role="group" aria-label="Role">
@@ -2201,13 +2277,15 @@ main{overflow-y:auto;min-height:0;container-type:inline-size;container-name:main
           <button data-v="dps" aria-pressed="false">DPS</button>
         </div>
       </div>
-      <button class="overview-link" id="ovLink"><span class="grid-ico" aria-hidden="true">
-        <i style="background:var(--crit)"></i><i style="background:var(--haste)"></i><i style="background:var(--mastery)"></i><i style="background:var(--vers)"></i>
-        <i style="background:var(--haste)"></i><i style="background:var(--vers)"></i><i style="background:var(--crit)"></i><i style="background:var(--mastery)"></i>
-      </span>Compare all specs</button>
-      <div class="rail-list" id="rail"></div>
+      <div class="rail-list" id="railList">
+        <button class="overview-link" id="ovLink"><span class="grid-ico" aria-hidden="true">
+          <i style="background:var(--crit)"></i><i style="background:var(--haste)"></i>
+          <i style="background:var(--mastery)"></i><i style="background:var(--vers)"></i>
+        </span>Compare all specs</button>
+        <div id="rail"></div>
+      </div>
     </aside>
-    <main id="main"></main>
+    <main class="glass" id="main"></main>
   </div>
 </div>
 
@@ -2215,26 +2293,34 @@ main{overflow-y:auto;min-height:0;container-type:inline-size;container-name:main
 const DATA = /*__DATA__*/null;
 
 const CLASS_COLORS = {
-  DeathKnight:"#E0425C", DemonHunter:"#B84FDB", Druid:"#FF7C0A", Evoker:"#3AAE96",
+  DeathKnight:"#C41E3A", DemonHunter:"#A330C9", Druid:"#FF7C0A", Evoker:"#33937F",
+  Hunter:"#8CBF4A", Mage:"#22A7D0", Monk:"#00A878", Paladin:"#E86FA0", Priest:"#7C7C85",
+  Rogue:"#C9A227", Shaman:"#2D7FD6", Warlock:"#7C7DE0", Warrior:"#B08050"
+};
+const CLASS_COLORS_DARK = {
+  DeathKnight:"#E0425C", DemonHunter:"#B84FDB", Druid:"#FF9333", Evoker:"#3FBFA3",
   Hunter:"#AAD372", Mage:"#3FC7EB", Monk:"#00E68A", Paladin:"#F48CBA", Priest:"#E8E8E8",
-  Rogue:"#FFF468", Shaman:"#3A8EF0", Warlock:"#9A9BFF", Warrior:"#C69B6D"
+  Rogue:"#FFF468", Shaman:"#4E9BF5", Warlock:"#9A9BFF", Warrior:"#C69B6D"
 };
 const ROLE_NAMES = {tank:"Tank", healer:"Healer", dps:"Damage"};
 const STATS = [
-  {k:"crit", n:"Crit", full:"Critical Strike", c:"var(--crit)", hex:"#ff6b5b"},
-  {k:"haste", n:"Haste", full:"Haste", c:"var(--haste)", hex:"#f4c542"},
-  {k:"mastery", n:"Mastery", full:"Mastery", c:"var(--mastery)", hex:"#a98cff"},
-  {k:"vers", n:"Vers", full:"Versatility", c:"var(--vers)", hex:"#3ecf9a"}
+  {k:"crit", n:"Crit", full:"Critical Strike", c:"var(--crit)", hex:"#ff5f52"},
+  {k:"haste", n:"Haste", full:"Haste", c:"var(--haste)", hex:"#f0b400"},
+  {k:"mastery", n:"Mastery", full:"Mastery", c:"var(--mastery)", hex:"#8b5cf6"},
+  {k:"vers", n:"Vers", full:"Versatility", c:"var(--vers)", hex:"#00b37e"}
 ];
 
-const state = {boss: 0, spec: null, role: "all", q: "", ovSort: null, cardSort: "rank"};
+const state = {boss: 0, spec: null, role: "all", q: "", ovSort: null, cardSort: "rank", theme: "auto"};
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const pct = v => (v*100).toFixed(0) + "%";
+const isDark = () => document.documentElement.dataset.theme === "dark";
+const classColor = cls => (isDark() ? CLASS_COLORS_DARK : CLASS_COLORS)[cls] || (isDark() ? "#bbb" : "#666");
 
 function fmtAmt(v){ if(!v) return "–"; if(v>=1e6) return (v/1e6).toFixed(2)+"M"; if(v>=1e3) return (v/1e3).toFixed(1)+"K"; return Math.round(v)+""; }
 function fmtInt(v){ return v ? Math.round(v).toLocaleString() : "–"; }
 function fmtDur(ms){ if(!ms) return "–"; const s=Math.round(ms/1000); return Math.floor(s/60)+":"+String(s%60).padStart(2,"0"); }
+function fmtDate(ms){ if(!ms) return "–"; return new Date(ms).toLocaleDateString(undefined,{day:"numeric",month:"short"}); }
 function ago(ms){
   const s = (Date.now()-ms)/1000;
   if(s < 90) return "just now";
@@ -2242,8 +2328,23 @@ function ago(ms){
   if(s < 36*3600) return Math.round(s/3600) + " hours ago";
   return Math.round(s/86400) + " days ago";
 }
-function fmtDate(ms){ if(!ms) return "–"; return new Date(ms).toLocaleDateString(undefined,{day:"numeric",month:"short"}); }
 function hexA(hex, a){ const n=parseInt(hex.slice(1),16); return `rgba(${n>>16},${(n>>8)&255},${n&255},${a})`; }
+
+/* ---------- theme ---------- */
+function applyTheme(){
+  let t = state.theme;
+  if(t === "auto") t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  document.documentElement.dataset.theme = t;
+  $("#theme").textContent = t === "dark" ? "☾" : "☀";
+  try{ localStorage.setItem("mss-theme", state.theme); }catch(e){}
+}
+function initTheme(){
+  try{ state.theme = localStorage.getItem("mss-theme") || "auto"; }catch(e){}
+  applyTheme();
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+    if(state.theme === "auto"){ applyTheme(); render(); }
+  });
+}
 
 /* ---------- data shaping ---------- */
 function specList(){
@@ -2301,7 +2402,6 @@ function tkLink(t, ilvl){
   const wh = ilvl && t.ilvl ? ` data-wowhead="ilvl=${Math.round(t.ilvl)}"` : "";
   return `<a href="https://www.wowhead.com/item=${t.id}" target="_blank" rel="noopener"${wh}>${esc(t.name || "Item " + t.id)}</a>`;
 }
-
 function talentBox(code){
   return `<div class="tal"><code title="${esc(code)}">${esc(code)}</code>
     <button class="copy" data-code="${esc(code)}">Copy</button>
@@ -2334,11 +2434,11 @@ function renderRail(specs){
     groups.get(s.cls).specs.push(s);
   }
   $("#ovLink").setAttribute("aria-current", state.spec ? "false" : "true");
-  if(!groups.size){ $("#rail").innerHTML = `<div class="rail-empty">No specs match. Clear the search or pick another role.</div>`; return; }
+  if(!groups.size){ $("#rail").innerHTML = `<div class="rail-empty">No specs match.</div>`; return; }
   $("#rail").innerHTML = [...groups].map(([cls,g])=>`
-    <div class="cls" style="--cc:${CLASS_COLORS[cls]||"#ccc"}"><h3>${esc(g.name)}</h3>
+    <div class="cls" style="--cc:${classColor(cls)}"><h3>${esc(g.name)}</h3>
       ${g.specs.map(s=>`<button class="spec-btn ${s.sum.n?"":"nodata"}" data-key="${esc(s.key)}" aria-current="${state.spec===s.key}">
-        <span>${esc(s.spec)}</span>
+        <span><span class="dot"></span>${esc(s.spec)}</span>
         <span class="mini" aria-hidden="true">${s.sum.nStats?STATS.map(st=>`<span style="width:${s.sum.share[st.k]*100}%;background:${st.c}"></span>`).join(""):""}</span>
       </button>`).join("")}
     </div>`).join("");
@@ -2361,24 +2461,24 @@ function renderOverview(specs){
     rows.sort((a,b)=>f(b)-f(a));
   }
   const cell = (s, st) => {
-    if(!s.sum.nStats) return `<td class="cell"><div style="background:var(--raised);color:var(--faint);text-shadow:none">–</div></td>`;
+    if(!s.sum.nStats) return `<td class="cell"><div style="background:var(--track);color:var(--faint)">–</div></td>`;
     const [lo,hi] = range[st.k];
     const t = hi>lo ? (s.sum.share[st.k]-lo)/(hi-lo) : .5;
     const top = s.sum.prio[0] && s.sum.prio[0].k === st.k;
-    return `<td class="cell ${top?"hi":""}"><div class="num" style="background:${hexA(st.hex, .14 + t*.78)}" title="${st.full}: ${pct(s.sum.share[st.k])} of secondary stats, avg ${fmtInt(s.sum.avg[st.k])} rating">${pct(s.sum.share[st.k])}</div></td>`;
+    return `<td class="cell ${top?"hi":""}"><div class="num" style="background:${hexA(st.hex, .1 + t*.55)}" title="${st.full}: ${pct(s.sum.share[st.k])} of secondary stats, avg ${fmtInt(s.sum.avg[st.k])} rating">${pct(s.sum.share[st.k])}</div></td>`;
   };
-  const th = (k,label,cls="") => `<th class="${cls} ${srt===k?"on":""}" data-sort="${k}" tabindex="0">${label}${srt===k?" ▼":""}</th>`;
+  const th = (k,label,cls="") => `<th class="${cls} ${srt===k?"on":""}" data-sort="${k}" tabindex="0">${label}${srt===k?" ↓":""}</th>`;
   $("#main").innerHTML = `<div class="pad">
     ${DATA.demo?`<div class="demo">Preview with made-up players and items</div>`:""}
     <div class="ov-head"><h2>${esc(bossName)}</h2>
-      <p>Each cell is that stat's share of the top 10's secondary stats. Brighter means more than other specs; the outlined cell is the spec's highest stat. Click a header to sort, or a row to open the spec.</p></div>
+      <p>Each cell is that stat's share of the top 10's secondary stats. Deeper colour means more than other specs; the outlined cell is the spec's highest. Click a header to sort, or a row to open the spec.</p></div>
     ${vis.length ? `<div class="heat-wrap"><table class="heat">
       <thead><tr>${th("","Spec")}${STATS.map(st=>th(st.k,`<span class="sw" style="background:${st.c}"></span><span class="lg">${st.full}</span><span class="sh">${st.n}</span>`)).join("")}
         ${th("prio","Priority","col-prio")}${th("ilvl","Avg ilvl","col-il")}<th class="col-tk">Most used trinket</th></tr></thead>
-      <tbody>${rows.map(s=>`<tr data-key="${esc(s.key)}" tabindex="0" style="--cc:${CLASS_COLORS[s.cls]||"#ccc"}">
+      <tbody>${rows.map(s=>`<tr data-key="${esc(s.key)}" tabindex="0" style="--cc:${classColor(s.cls)}">
         <td class="sp"><b>${esc(s.spec)}</b><small>${esc(s.className)}</small></td>
         ${STATS.map(st=>cell(s,st)).join("")}
-        <td class="prio col-prio">${s.sum.prio.map(x=>x.n).join(" > ") || `<span class="nod">No stats yet</span>`}</td>
+        <td class="prio col-prio">${s.sum.prio.map(x=>x.n).join(" › ") || `<span class="nod">No stats yet</span>`}</td>
         <td class="num col-il">${s.sum.ilvl?s.sum.ilvl.toFixed(1):"–"}</td>
         <td class="col-tk"><div class="tk">${s.sum.trinkets[0]?`${tkLink(s.sum.trinkets[0])} <span class="nod">${s.sum.trinkets[0].n}/${s.sum.n}</span>`:`<span class="nod">–</span>`}</div></td>
       </tr>`).join("")}</tbody></table></div>`
@@ -2415,21 +2515,21 @@ function card(p, s, allBosses, maxShare){
   const statBlock = st ? `
     <div class="sbars">${STATS.map(x=>{
       const sh = tot ? st[x.k]/tot : 0;
-      return `<div class="sb"><span>${x.n}</span><span class="t"><i style="width:${maxShare?Math.min(100,sh/maxShare*100):0}%;background:${x.c}"></i></span><span class="v num">${fmtInt(st[x.k])}</span><span class="p num">${pct(sh)}</span></div>`;
+      return `<div class="sb"><span style="color:var(--dim)">${x.n}</span><span class="t"><i style="width:${maxShare?Math.min(100,sh/maxShare*100):0}%;background:${x.c}"></i></span><span class="v num">${fmtInt(st[x.k])}</span><span class="p num">${pct(sh)}</span></div>`;
     }).join("")}</div>
     <div class="prim"><span>${esc(st.primaryName)} <b class="num">${fmtInt(st.primary)}</b></span><span>Stamina <b class="num">${fmtInt(st.stamina)}</b></span></div>`
-    : `<div class="pending">${pending ? "Stats not loaded yet. Run the script again to fill this in." : "This log has no stat data."}</div>`;
+    : `<div class="pending">${pending ? "Stats not loaded yet." : "This log has no stat data."}</div>`;
   const potName = p.potion && (p.potion.name || (p.potion.id ? "Potion " + p.potion.id : ""));
   const pot = potName
-    ? `<div><span style="color:var(--dim)">Potion</span><span>${esc(potName)}</span></div>`
+    ? `<div><span style="color:var(--faint)">Potion</span><span>${esc(potName)}</span></div>`
     : (p.potion === null || p.potion === undefined ? "" :
-       `<div><span style="color:var(--dim)">Potion</span><span class="nostat" style="color:var(--faint)">none cast</span></div>`);
+       `<div><span style="color:var(--faint)">Potion</span><span style="color:var(--faint)">none cast</span></div>`);
   const tks = p.trinkets.length
     ? p.trinkets.map(t=>`<div>${tkLink(t,true)}<small class="num">${t.ilvl?Math.round(t.ilvl):""}</small></div>`).join("")
     : `<div class="pending">${pending ? "Trinkets not loaded yet" : "No trinket data"}</div>`;
   const logLink = p.report && p.report !== "demo"
     ? `<a href="https://www.warcraftlogs.com/reports/${encodeURIComponent(p.report)}#fight=${p.fight}" target="_blank" rel="noopener">View log</a>` : "";
-  return `<article class="card ${p.rank===1?"first":""}">
+  return `<article class="card glass ${p.rank===1?"first":""}">
     <div class="c-top">
       <span class="rank num">${p.rank}</span>
       <div class="nm2"><b>${esc(p.name)}</b><small>${esc([p.guild, p.server && (p.server+(p.region?" ("+p.region+")":""))].filter(Boolean).join(", ")) || "&nbsp;"}</small></div>
@@ -2439,14 +2539,13 @@ function card(p, s, allBosses, maxShare){
     <div class="c-tk">${tks}${pot}</div>
     <div class="c-tal"><span class="h">Talents</span>${
       p.talents ? talentBox(p.talents)
-      : `<div class="pending">${p.talents === "" ? "This log has no talent code" : "Talents not loaded yet"}</div>`}</div>
+      : `<div class="pending">${p.talents === "" ? "No talent code in this log" : "Not loaded yet"}</div>`}</div>
     <div class="c-foot">${allBosses?`<span>${esc(p.boss)}</span>`:""}<span>Kill ${fmtDur(p.duration)}</span><span>${fmtDate(p.date)}</span>${logLink}</div>
   </article>`;
 }
 
 function renderSpec(s){
-  const sum = s.sum, cc = CLASS_COLORS[s.cls] || "#ccc";
-  document.documentElement.style.setProperty("--accent", cc);
+  const sum = s.sum, cc = classColor(s.cls);
   const allBosses = state.boss === "all";
   const bossName = allBosses ? "all bosses" : DATA.bosses[state.boss].name;
   const players = [...s.players].sort((CARD_SORTS[state.cardSort]||CARD_SORTS.rank)[1]);
@@ -2455,9 +2554,9 @@ function renderSpec(s){
   }));
 
   const split = sum.nStats ? `<div class="split-big">
-      <div class="split-bar">${STATS.map(st=>`<span style="width:${sum.share[st.k]*100}%;background:${st.c}" title="${st.full} ${pct(sum.share[st.k])}">${sum.share[st.k]>.09?`${st.n} ${pct(sum.share[st.k])}`:""}</span>`).join("")}</div>
-      <div class="split-note"><span>Stat priority from the top ${sum.nStats}: <strong>${sum.prio.map(x=>x.full).join(" > ")}</strong></span>
-      ${sum.nStats<sum.n?`<span>${sum.n-sum.nStats} player${sum.n-sum.nStats>1?"s":""} not loaded yet</span>`:""}</div>
+      <div class="split-bar">${STATS.map(st=>`<span style="width:${sum.share[st.k]*100}%;background:${st.c};color:#fff" title="${st.full} ${pct(sum.share[st.k])}">${sum.share[st.k]>.09?`${st.n} ${pct(sum.share[st.k])}`:""}</span>`).join("")}</div>
+      <div class="split-note"><span>Stat priority from the top ${sum.nStats}: <strong>${sum.prio.map(x=>x.full).join(" › ")}</strong></span>
+      ${sum.nStats<sum.n?`<span>${sum.n-sum.nStats} not loaded yet</span>`:""}</div>
     </div>` : "";
 
   const ranges = sum.nStats ? STATS.map(st=>{
@@ -2475,35 +2574,34 @@ function renderSpec(s){
   const withTal = s.players.filter(p=>p.talents).length;
   const buildsHtml = builds.length ? builds.slice(0,6).map((b,i)=>`
     <div class="build">
-      <div class="build-top"><b>${i===0 && b.players.length>1 ? "Most used build" : `Build ${i+1}`}</b>
+      <div class="build-top"><b>${i===0 && b.players.length>1 ? "Most used" : `Build ${i+1}`}</b>
         <span class="share"><i style="width:${b.players.length/withTal*100}%"></i></span>
-        <span class="ct num" style="color:var(--dim);font-size:.85rem">${b.players.length} of ${withTal}</span></div>
+        <span class="num" style="color:var(--dim);font-size:.8rem">${b.players.length} of ${withTal}</span></div>
       ${talentBox(b.code)}
       <small>${b.players.sort((x,y)=>x.rank-y.rank).map(p=>`#${p.rank} ${esc(p.name)}`).join(", ")}</small>
-    </div>`).join("") + (builds.length>6?`<div class="pending">${builds.length-6} more builds are on the player cards below.</div>`:"")
-    : `<div class="pending">No talents loaded for this spec yet. Run the script again to fetch them.</div>`;
-  const potCounts = new Map();
-  for(const p of s.players){
-    const nm = p.potion && (p.potion.name || (p.potion.id ? "Potion " + p.potion.id : ""));
-    if(nm){
-      const c = potCounts.get(nm) || {name:nm, n:0};
-      c.n++; potCounts.set(nm, c);
-    }
-  }
-  const pots = [...potCounts.values()].sort((a,b)=>b.n-a.n);
-  const potsHtml = pots.length ? pots.map(x=>`<div class="tk-row"><span class="nm">${esc(x.name)}</span><span class="ct num">${x.n}</span>
-      <span class="bar"><i style="width:${x.n/pots[0].n*100}%"></i></span></div>`).join("") : "";
+    </div>`).join("") + (builds.length>6?`<div class="pending">${builds.length-6} more on the cards below.</div>`:"")
+    : `<div class="pending">No talents loaded for this spec yet.</div>`;
+
   const tkMax = sum.trinkets[0]?.n || 1;
   const trinkets = sum.trinkets.length ? sum.trinkets.slice(0,8).map(t=>`
     <div class="tk-row"><span class="nm">${tkLink(t)}</span><span class="ct num">${t.n} of ${sum.withTk}</span>
       <span class="bar"><i style="width:${t.n/tkMax*100}%"></i></span></div>`).join("")
     : `<div class="pending">No trinkets loaded for this spec yet.</div>`;
 
+  const potCounts = new Map();
+  for(const p of s.players){
+    const nm = p.potion && (p.potion.name || (p.potion.id ? "Potion " + p.potion.id : ""));
+    if(nm){ const c = potCounts.get(nm) || {name:nm, n:0}; c.n++; potCounts.set(nm, c); }
+  }
+  const pots = [...potCounts.values()].sort((a,b)=>b.n-a.n);
+  const potsHtml = pots.length ? pots.map(x=>`<div class="tk-row"><span class="nm">${esc(x.name)}</span><span class="ct num">${x.n}</span>
+      <span class="bar"><i style="width:${x.n/pots[0].n*100}%"></i></span></div>`).join("") : "";
+
   $("#main").innerHTML = `<div style="--cc:${cc}">
     <section class="hero">
       ${DATA.demo?`<div class="demo">Preview with made-up players and items</div>`:""}
       <div class="hero-grid">
-        <div><h2>${esc(s.spec)}</h2><div class="who">${esc(s.className)}, ${ROLE_NAMES[s.role]||s.role}, top 10 on ${esc(bossName)}</div></div>
+        <div><h2>${esc(s.spec)}</h2><div class="who">${esc(s.className)} · ${ROLE_NAMES[s.role]||s.role} · top 10 on ${esc(bossName)}</div></div>
         <div class="facts">
           <div class="fact"><b class="num">${fmtAmt(sum.best)}</b><span>Best ${s.metric}</span></div>
           <div class="fact"><b class="num">${sum.ilvl?sum.ilvl.toFixed(1):"–"}</b><span>Average item level</span></div>
@@ -2515,17 +2613,17 @@ function renderSpec(s){
     <div class="pad">
       ${sum.n ? `
       <div class="panels">
-        <section class="panel"><h3>Secondary stat ranges<small>Dots are players, the white line is the average</small></h3>${ranges}</section>
-        <section class="panel"><h3>Trinkets used<small>Across the top ${sum.withTk || sum.n}</small></h3>${trinkets}
-          ${potsHtml ? `<h3 style="margin-top:1.1rem">Combat potions</h3>${potsHtml}` : ""}</section>
-        <section class="panel"><h3>Talent builds<small>${withTal ? `${builds.length} different across ${withTal} players` : ""}</small></h3>${buildsHtml}</section>
+        <section class="panel glass"><h3>Secondary stat ranges<small>Dots are players, the line is the average</small></h3>${ranges}</section>
+        <section class="panel glass"><h3>Trinkets used<small>Across the top ${sum.withTk || sum.n}</small></h3>${trinkets}
+          ${potsHtml ? `<h3 style="margin-top:1rem">Combat potions</h3>${potsHtml}` : ""}</section>
+        <section class="panel glass"><h3>Talent builds<small>${withTal ? `${builds.length} across ${withTal} players` : ""}</small></h3>${buildsHtml}</section>
       </div>
       <div class="players-head"><h3>${allBosses ? "Top players by boss" : "Top 10 players"}</h3>
-        <label><span class="sr" style="color:var(--dim);font-size:.85rem;margin-right:.4rem">Sort by</span>
+        <label><span style="color:var(--dim);font-size:.82rem;margin-right:.4rem">Sort by</span>
           <select id="cardSort">${Object.entries(CARD_SORTS).map(([k,[n]])=>`<option value="${k}" ${state.cardSort===k?"selected":""}>${n}</option>`).join("")}</select></label>
       </div>
       <div class="cards">${players.map(p=>card(p,s,allBosses,maxShare)).join("")}</div>`
-      : `<div class="empty">No Mythic rankings for ${esc(s.spec)} ${esc(s.className)} on ${esc(bossName)} yet. Try another boss.</div>`}
+      : `<div class="empty">No Mythic rankings for ${esc(s.spec)} ${esc(s.className)} on ${esc(bossName)} yet.</div>`}
     </div>
   </div>`;
   const cs = $("#cardSort");
@@ -2552,29 +2650,31 @@ function render(){
   const specs = specList();
   renderRail(specs);
   const s = state.spec && specs.find(x=>x.key===state.spec);
-  if(s) renderSpec(s);
-  else { state.spec = null; document.documentElement.style.setProperty("--accent", "#c9d2e3"); renderOverview(specs); }
+  if(s) renderSpec(s); else { state.spec = null; renderOverview(specs); }
   if(window.$WowheadPower && $WowheadPower.refreshLinks) try{ $WowheadPower.refreshLinks(); }catch(e){}
 }
 
 function init(){
+  initTheme();
+  $("#theme").addEventListener("click", ()=>{
+    state.theme = isDark() ? "light" : "dark";
+    applyTheme(); render();
+  });
   if(!DATA || !DATA.bosses || !DATA.bosses.length){
     $("#main").innerHTML = `<div class="empty">Nothing saved yet. Run wcl_mythic_stats.py to download rankings.</div>`;
     return;
   }
   $("#title").textContent = DATA.zone;
-  document.title = DATA.zone + " stat sheet";
+  document.title = DATA.zone + " · Mythic Stat Sheet";
   const gen = new Date(DATA.generated);
   const pr = DATA.progress;
   const partial = pr && pr.total && pr.loaded < pr.total;
   const age = Date.now() - gen.getTime();
   const cls = age > 3*86400e3 ? "stale" : age > 36*3600e3 ? "old" : "";
   $("#sub").innerHTML = `<span class="stamp ${cls}"><i></i>Updated ${esc(ago(gen.getTime()))}</span>`
-    + `<span>${esc(gen.toLocaleString(undefined,{dateStyle:"medium",timeStyle:"short"}))}</span>`
-    + `<span>Mythic, top 10 per spec, ${esc(DATA.region)}</span>`
-    + (partial ? `<span class="warn">${pr.loaded} of ${pr.total} players loaded</span>` : "")
-    + (pr && pr.total && pr.talents !== undefined && pr.talents < pr.total ? `<span class="warn">talents for ${pr.talents}</span>` : "")
-    + (DATA.addon ? `<a class="dl" href="${esc(DATA.addon)}" download>Download the in-game addon</a>` : "");
+    + `<span>Mythic · top 10 per spec · ${esc(DATA.region)}</span>`
+    + (partial ? `<span class="warn">${pr.loaded} of ${pr.total} loaded</span>` : "")
+    + (DATA.addon ? `<a class="dl" href="${esc(DATA.addon)}" download>Addon</a>` : "");
 
   const tabs = DATA.bosses.map((b,i)=>[i,b.name]);
   if(DATA.bosses.length > 1) tabs.push(["all","All bosses"]);
@@ -2584,14 +2684,6 @@ function init(){
     state.boss = b.dataset.v === "all" ? "all" : +b.dataset.v;
     render();
   });
-  $("#main").addEventListener("click", async e=>{
-    const b = e.target.closest(".copy"); if(!b) return;
-    const ok = await copyText(b.dataset.code);
-    b.textContent = ok ? "Copied" : "Press Ctrl+C";
-    if(ok) b.classList.add("done");
-    else { const c = b.parentElement.querySelector("code"); const r = document.createRange(); r.selectNodeContents(c); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); }
-    setTimeout(()=>{ b.textContent = "Copy"; b.classList.remove("done"); }, 1600);
-  });
   $("#rail").addEventListener("click", e=>{ const b = e.target.closest(".spec-btn"); if(b) openSpec(b.dataset.key); });
   $("#ovLink").addEventListener("click", ()=>{ state.spec = null; render(); });
   $("#q").addEventListener("input", e=>{ state.q = e.target.value.trim(); render(); });
@@ -2600,6 +2692,14 @@ function init(){
     state.role = b.dataset.v;
     document.querySelectorAll("#roles button").forEach(x=>x.setAttribute("aria-pressed", x===b));
     render();
+  });
+  $("#main").addEventListener("click", async e=>{
+    const b = e.target.closest(".copy"); if(!b) return;
+    const ok = await copyText(b.dataset.code);
+    b.textContent = ok ? "Copied" : "Press Ctrl+C";
+    if(ok) b.classList.add("done");
+    else { const c = b.parentElement.querySelector("code"); const r = document.createRange(); r.selectNodeContents(c); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); }
+    setTimeout(()=>{ b.textContent = "Copy"; b.classList.remove("done"); }, 1600);
   });
   readHash();
   render();
