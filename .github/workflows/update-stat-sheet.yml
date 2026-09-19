@@ -61,6 +61,12 @@ jobs:
             --addon build/MythicStats \
             --interface 120100,120105
 
+      - name: Mythic+ comps from Raider.IO
+        env:
+          RIO_API_KEY: ${{ secrets.RIO_API_KEY }}
+        run: |
+          python mplus.py --out site/mplus.html --pages 5 || echo "Mythic+ step failed; the rest of the site is unaffected."
+
       - name: Zip the in-game addon for download
         run: |
           if [ -d build/MythicStats ]; then
