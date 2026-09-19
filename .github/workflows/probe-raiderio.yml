@@ -1,0 +1,37 @@
+name: Probe Raider.IO
+
+# Run by hand from the Actions tab. Reads the Raider.IO API and prints what it
+# returns, so the Mythic+ section can be built against the real data.
+
+on:
+  workflow_dispatch:
+    inputs:
+      season:
+        description: "Season slug, if you know it (leave blank to list them)"
+        required: false
+        default: ""
+      expansion:
+        description: "Expansion ID for the static data"
+        required: false
+        default: "11"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Ask Raider.IO what it has
+        env:
+          RIO_API_KEY: ${{ secrets.RIO_API_KEY }}
+        run: |
+          if [ -n "${{ inputs.season }}" ]; then
+            python mplus.py --probe --expansion "${{ inputs.expansion }}" --season "${{ inputs.season }}"
+          else
+            python mplus.py --probe --expansion "${{ inputs.expansion }}"
+          fi
